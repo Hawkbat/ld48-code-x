@@ -1,10 +1,12 @@
 import 'phaser'
+import { Scene } from 'phaser'
 
-const DEBUG = false
+const DEBUG = true
 
 export abstract class EntityBase {
-    initialized: boolean = false
     active: boolean = false
+    initialized: boolean = false
+    spawned: boolean = false
     scene!: Phaser.Scene
     floorIndex: number = 0
 
@@ -18,6 +20,7 @@ export abstract class EntityBase {
         this.despawn()
         this.scene = scene
         this.active = true
+        this.spawned = true
         if (!this.initialized) {
             this.initialize()
         }
@@ -25,7 +28,12 @@ export abstract class EntityBase {
 
     despawn() {
         this.active = false
+        this.spawned = false
         this.scene = undefined as any
+    }
+
+    destroy(): void {
+        this.despawn()
     }
 
     update(t: number, dt: number) { }
@@ -35,14 +43,18 @@ export abstract class EntityBase {
 
 export class Floor extends EntityBase {
     map!: Phaser.Tilemaps.Tilemap
-    tileset!: Phaser.Tilemaps.Tileset
+    tilesets: Phaser.Tilemaps.Tileset[] = []
     collider!: Phaser.Physics.Arcade.Collider
 
     spawn(scene: Phaser.Scene) {
         super.spawn(scene)
         this.map = this.scene.make.tilemap({ key: 'tilemap' })
-        this.tileset = this.map.addTilesetImage('tileset', 'tileset')
-        const wallLayer = this.map.createLayer('walls', this.tileset)
+        this.tilesets = [
+            this.map.addTilesetImage('Test-BlockTile', 'tileset-blocks'),
+            this.map.addTilesetImage('Test-Tiles', 'tileset-tiles'),
+        ]
+        const wallLayer = this.map.createLayer('Tile Layer 1', this.tilesets)
+        wallLayer.setCollisionBetween(0, 999, true)
         this.collider = this.scene.physics.add.collider(gameState.player.sprite, wallLayer)
     }
 
@@ -54,6 +66,7 @@ export class Floor extends EntityBase {
 
     update(t: number, dt: number) {
         super.update(t, dt)
+        if (!this.active) return
     }
 }
 
@@ -80,6 +93,7 @@ export abstract class ActorBase extends EntityBase {
 
     postUpdate() {
         super.postUpdate()
+        if (!this.active) return
         this.x = this.sprite.x
         this.y = this.sprite.y
         this.sprite.setDepth(this.y)
@@ -92,6 +106,9 @@ export abstract class UnitBase extends ActorBase {
     hurtDirX: number = 0
     hurtDirY: number = 0
     facing: 'up' | 'right' | 'down' | 'left' = 'down'
+
+    get tileX() { return this.x / 32 + 0.5 }
+    get tileY() { return this.y / 32 + 0.5 }
 
     get isHurting() { return this.hurtTime > 0 }
 
@@ -115,17 +132,20 @@ export abstract class UnitBase extends ActorBase {
 
     update(t: number, dt: number) {
         super.update(t, dt)
+        if (!this.active) return
         this.hurtTime -= dt
         this.sprite.tint = this.isHurting && Math.sin(t * Math.PI * 16) > 0 ? 0xFF0000 : 0xFFFFFF
     }
 
     postUpdate() {
         super.postUpdate()
+        if (!this.active) return
         if (DEBUG) {
             this.debugText.x = this.x
             this.debugText.y = this.y
-            this.debugText.setText('' + this.power + '/' + this.maxPower)
+            this.debugText.setText('' + this.power + '/' + this.maxPower + ' / ' + this.tileX + ', ' + this.tileY)
         }
+        if (this.power <= 0) this.die()
     }
 
     hurt(damage: number, inflictor: ActorBase) {
@@ -138,6 +158,8 @@ export abstract class UnitBase extends ActorBase {
             this.hurtDirY = dir.y
         }
     }
+
+    abstract die(): void
 }
 
 export class Player extends UnitBase {
@@ -173,6 +195,7 @@ export class Player extends UnitBase {
 
     update(t: number, dt: number) {
         super.update(t, dt)
+        if (!this.active) return
         const cursors = this.scene.input.keyboard.createCursorKeys()
         const speed = 100
         let vx = 0
@@ -185,6 +208,8 @@ export class Player extends UnitBase {
             const key = `player-${vy < 0 ? 'up' : vy > 0 ? 'down' : 'center'}-${vx < 0 ? 'left' : vx > 0 ? 'right' : 'center'}`
             this.sprite.anims.play(key, true)
         }
+        if (vx !== 0) this.facing = vx > 0 ? 'right' : 'left'
+        if (vy !== 0) this.facing = vy > 0 ? 'down' : 'up'
         if (this.hurtTime > 0.75) {
             vx += this.hurtDirX * speed * 2
             vy += this.hurtDirY * speed * 2
@@ -194,14 +219,21 @@ export class Player extends UnitBase {
         if (cursors.space.isDown && !this.placing) {
             this.placing = true
             this.power -= 10
-            gameState.drones.push(new Drone(this.x, this.y, 10))
+            const drone = new Drone(this.x, this.y, 10)
+            drone.facing = this.facing
+            gameState.drones.push(drone)
         }
         if (!cursors.space.isDown && this.placing) this.placing = false
     }
 
     postUpdate() {
         super.postUpdate()
+        if (!this.active) return
         this.scene.cameras.main.setScroll(Math.round(this.body.x - this.scene.renderer.width / 2), Math.round(this.body.y - this.scene.renderer.height / 2))
+    }
+
+    die() {
+        alert('Game over')
     }
 }
 
@@ -215,8 +247,14 @@ export abstract class DroneBase extends UnitBase {
         this.scene.anims.create({ key: `drone-left-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 3, end: 3 }), frameRate: 5, repeat: -1 })
     }
 
+    spawn(scene: Scene) {
+        super.spawn(scene)
+        this.sprite.setPosition(Math.round(this.tileX) * 32 - 16, Math.round(this.tileY) * 32 - 16)
+    }
+
     update(t: number, dt: number) {
         super.update(t, dt)
+        if (!this.active) return
         const tick = Math.floor(t / gameState.tickRate)
         if (t >= tick && t - dt <= tick) {
             this.tick()
@@ -225,11 +263,12 @@ export abstract class DroneBase extends UnitBase {
 
     postUpdate() {
         super.postUpdate()
+        if (!this.active) return
         this.sprite.anims.play(`drone-${this.facing}-${this.spriteKey}`, true)
     }
 
     tick() {
-
+        this.sprite.setPosition(Math.round(this.tileX) * 32 - 16, Math.round(this.tileY) * 32 - 16)
     }
 }
 
@@ -247,9 +286,21 @@ export class Drone extends DroneBase {
         gameState.droneGroup.remove(this.sprite)
     }
 
+    destroy() {
+        super.destroy()
+        gameState.drones.splice(gameState.drones.indexOf(this), 1)
+    }
+
     tick() {
         super.tick()
-        gameState.bullets.push(new Pulse(this.x, this.y, 0, 1, 20, true, 10))
+        const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
+        const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
+        gameState.bullets.push(new Pulse(this.x, this.y, dx, dy, 128, 1, true, 10))
+        this.power--
+    }
+
+    die() {
+        this.destroy()
     }
 }
 
@@ -277,12 +328,25 @@ export class Mob extends DroneBase {
         if (this.collider) this.collider.destroy()
     }
 
+    destroy() {
+        super.destroy()
+        gameState.mobs.splice(gameState.mobs.indexOf(this), 1)
+    }
+
     tick() {
         super.tick()
+        const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
+        const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
         if (this.facing === 'up') this.facing = 'right'
         else if (this.facing === 'right') this.facing = 'down'
         else if (this.facing === 'down') this.facing = 'left'
         else if (this.facing === 'left') this.facing = 'up'
+        gameState.bullets.push(new Pulse(this.x, this.y, dx, dy, 128, 1, false, 10))
+    }
+
+    die() {
+        gameState.drops.push(new PowerDrop(this.x, this.y))
+        this.destroy()
     }
 }
 
@@ -293,10 +357,7 @@ export abstract class DropBase extends ActorBase {
         super.spawn(scene)
         gameState.dropGroup.add(this.sprite)
         this.collider = this.scene.physics.add.overlap(this.sprite, gameState.playerGroup, () => {
-            if (this.pickup()) {
-                this.despawn()
-                gameState.drops.splice(gameState.drops.indexOf(this), 1)
-            }
+            if (this.pickup()) this.destroy()
         }, undefined, this)
         this.collider.overlapOnly = true
     }
@@ -305,6 +366,11 @@ export abstract class DropBase extends ActorBase {
         super.despawn()
         gameState.dropGroup.remove(this.sprite)
         if (this.collider) this.collider.destroy()
+    }
+
+    destroy() {
+        super.destroy()
+        gameState.drops.splice(gameState.drops.indexOf(this), 1)
     }
 
     abstract pickup(): boolean | undefined
@@ -330,19 +396,17 @@ export class PowerDrop extends DropBase {
 export abstract class BulletBase extends ActorBase {
     collider!: Phaser.Physics.Arcade.Collider
 
-    constructor(x: number, y: number, public dx: number, public dy: number, public speed: number) {
+    constructor(x: number, y: number, public dx: number, public dy: number, public speed: number, public lifetime: number) {
         super(x, y)
     }
 
     spawn(scene: Phaser.Scene) {
         super.spawn(scene)
         gameState.bulletGroup.add(this.sprite)
+        this.body.setSize(16, 16)
         this.collider = this.scene.physics.add.overlap(this.sprite, [gameState.playerGroup, gameState.droneGroup, gameState.mobGroup], (_, other) => {
             const target = gameState.player.body === other.body ? gameState.player : gameState.drones.find(d => d.body === other.body) ?? gameState.mobs.find(m => m.body === other.body)
-            if (target && this.hit(target)) {
-                this.despawn()
-                gameState.bullets.splice(gameState.bullets.indexOf(this), 1)
-            }
+            if (target && this.hit(target)) this.destroy()
         }, undefined, this)
         this.collider.overlapOnly = true
     }
@@ -353,9 +417,17 @@ export abstract class BulletBase extends ActorBase {
         if (this.collider) this.collider.destroy()
     }
 
+    destroy() {
+        super.destroy()
+        gameState.bullets.splice(gameState.bullets.indexOf(this), 1)
+    }
+
     update(t: number, dt: number) {
         super.update(t, dt)
+        if (!this.active) return
         this.body.setVelocity(this.dx * this.speed, this.dy * this.speed)
+        this.lifetime -= dt
+        if (this.lifetime <= 0) this.destroy()
     }
 
     abstract hit(target: Player | Drone | Mob): boolean | undefined
@@ -365,8 +437,8 @@ export class Pulse extends BulletBase {
 
     get spriteKey() { return 'placeholder' }
 
-    constructor(x: number, y: number, dx: number, dy: number, speed: number, public friendly: boolean, public damage: number) {
-        super(x, y, dx, dy, speed)
+    constructor(x: number, y: number, dx: number, dy: number, speed: number, lifetime: number, public friendly: boolean, public damage: number) {
+        super(x, y, dx, dy, speed, lifetime)
     }
 
     hit(target: Player | Drone | Mob) {
@@ -378,11 +450,11 @@ export class Pulse extends BulletBase {
 
 export class GameState {
     player: Player = new Player()
-    drones: Drone[] = [new Drone(100, 0, 10)]
-    mobs: Mob[] = [new Mob(100, 100, 10, 10)]
+    drones: Drone[] = [new Drone(100, 0, 25)]
+    mobs: Mob[] = [new Mob(100, 100, 50, 10)]
     drops: DropBase[] = [new PowerDrop(200, 250)]
-    bullets: BulletBase[] = [new Pulse(200, 100, -1, 0, 10, true, 10)]
-    floors: Floor[] = []
+    bullets: BulletBase[] = [new Pulse(200, 100, -1, 0, 10, 2, true, 10)]
+    floors: Floor[] = [new Floor()]
     floorIndex: number = 0
 
     tickRate: number = 1.0
@@ -409,8 +481,9 @@ export class GameplayScene extends Phaser.Scene {
     }
 
     preload() {
-        this.load.image('tileset', '/assets/tileset.png')
-        this.load.tilemapTiledJSON('tilemap', 'assets/tilemap.json')
+        this.load.image('tileset-blocks', '/assets/Test-BlockTile.png')
+        this.load.image('tileset-tiles', '/assets/Test-Tiles.png')
+        this.load.tilemapTiledJSON('tilemap', 'assets/Code-X.json')
         this.load.image('placeholder', '/assets/placeholder.png')
         this.load.spritesheet('player', '/assets/Battery-Bot.png', { frameWidth: 32, frameHeight: 32 })
         this.load.spritesheet('drone-gun', '/assets/Drone_Gun.png', { frameWidth: 32, frameHeight: 32 })
@@ -425,10 +498,10 @@ export class GameplayScene extends Phaser.Scene {
     }
 
     update(t: number, dt: number) {
-        for (const ent of gameState.entities.filter(e => e.floorIndex === gameState.floorIndex && !e.active)) ent.spawn(this)
-        for (const ent of gameState.entities.filter(e => e.floorIndex !== gameState.floorIndex && e.active)) ent.despawn()
-        for (const ent of gameState.entities.filter(e => e.active)) ent.update(t / 1000, dt / 1000)
-        for (const ent of gameState.entities.filter(e => e.active)) ent.postUpdate()
+        for (const ent of gameState.entities.filter(e => e.floorIndex === gameState.floorIndex && !e.spawned)) ent.spawn(this)
+        for (const ent of gameState.entities.filter(e => e.floorIndex !== gameState.floorIndex && e.spawned)) ent.despawn()
+        for (const ent of gameState.entities.filter(e => e.spawned && e.active)) ent.update(t / 1000, dt / 1000)
+        for (const ent of gameState.entities.filter(e => e.spawned && e.active)) ent.postUpdate()
     }
 }
 
