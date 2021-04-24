@@ -265,10 +265,14 @@ export class Player extends UnitBase {
 
             const d = gameState.drones.filter(d => dist(this.sprite, d) < 20).sort((a, b) => dist(this.sprite, a) - dist(this.sprite, b))[0]
 
+            const i = gameState.interactibles.filter(i => dist(this.sprite, i) < 20).sort((a, b) => dist(this.sprite, a) - dist(this.sprite, b))[0]
+
             if (d) {
                 const refund = Math.min(this.maxPower - this.power, d.power)
                 this.power += refund
                 d.destroy()
+            } else if (i) {
+                i.interact()
             } else {
                 const s = this.schematics[this.schematicIndex]
                 if (s && this.power > s.cost && !gameState.drones.some(d => d.schematic === s)) {
@@ -616,6 +620,30 @@ export class BulletPulse extends BulletBase {
     }
 }
 
+export abstract class InteractableBase extends ActorBase {
+
+    destroy() {
+        super.destroy()
+        gameState.interactibles.splice(gameState.interactibles.indexOf(this), 1)
+    }
+
+    abstract interact(): void
+}
+
+export class InteractablePowerCore extends InteractableBase {
+    power: number = 25
+
+    get spriteKey() { return 'destructible-power-core' }
+
+    interact() {
+        if (gameState.player.power < gameState.player.maxPower) {
+            const delta = Math.min(gameState.player.maxPower - gameState.player.power, this.power)
+            gameState.player.power += delta
+            this.destroy()
+        }
+    }
+}
+
 export class GameState {
     player: Player = new Player()
     drones: Drone[] = []
@@ -625,6 +653,7 @@ export class GameState {
     ]
     drops: DropBase[] = []
     bullets: BulletBase[] = []
+    interactibles: InteractableBase[] = [new InteractablePowerCore(176, -80)]
     floors: Floor[] = [new Floor()]
     floorIndex: number = 0
 
@@ -638,7 +667,7 @@ export class GameState {
 
     get floor() { return this.floors[this.floorIndex] }
 
-    get entities() { return [this.player, ...this.drones, ...this.enemies, ...this.drops, ...this.bullets, ...this.floors] }
+    get entities() { return [this.player, ...this.drones, ...this.enemies, ...this.drops, ...this.bullets, ...this.interactibles, ...this.floors] }
 }
 
 const gameState = new GameState()
@@ -666,6 +695,7 @@ export class GameplayScene extends Phaser.Scene {
         this.load.spritesheet('enemy-gun-hover', 'assets/Enemy-Gun-Hovering.png', { frameWidth: 32 })
         this.load.spritesheet('power-bar', 'assets/Power-Bar.png', { frameWidth: 32 })
         this.load.spritesheet('pickup-energy', 'assets/Pickup-Energy.png', { frameWidth: 8 })
+        this.load.image('destructible-power-core', 'assets/Destructable-Powercore.png')
     }
 
     create() {
