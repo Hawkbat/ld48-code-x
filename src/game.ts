@@ -95,8 +95,8 @@ export class Floor extends EntityBase {
         this.bgTileset = this.map.addTilesetImage('Test-Tiles', 'tileset-tiles')
         this.fgTileset = this.map.addTilesetImage('Test-BlockTile', 'tileset-blocks')
 
-        this.bgLayer = this.map.createLayer('Floors', this.bgTileset, -128 + -512, -512 + -128 + 0)
-        this.fgLayer = this.map.createLayer('Walls', this.fgTileset, -128, -1024 + -128 + -8)
+        this.bgLayer = this.map.createLayer('Floors', this.bgTileset, -384, -1024 + -128 + 0)
+        this.fgLayer = this.map.createLayer('Walls', this.fgTileset, -384, -1024 + -128 + -8)
 
         this.bgLayer.setDepth(-9001)
         this.fgLayer.setDepth(-9000)
@@ -110,7 +110,10 @@ export class Floor extends EntityBase {
             this.debugLayer = this.fgLayer.renderDebug(this.debugGfx)
         }
 
-        this.collider = this.scene.physics.add.collider(gameState.player.sprite, this.fgLayer)
+        this.collider = this.scene.physics.add.collider([gameState.playerGroup, gameState.droneGroup, gameState.enemyGroup, gameState.bulletGroup], this.fgLayer, other => {
+            const b = gameState.bullets.find(b => b.spawned && b.body === other.body)
+            if (b) b.destroy()
+        })
     }
 
     despawn() {
