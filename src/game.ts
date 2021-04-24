@@ -3,6 +3,9 @@ import { Scene } from 'phaser'
 
 const DEBUG = false
 
+type Facing4Way = 'up' | 'right' | 'down' | 'left'
+type Facing8Way = 'center-center' | 'up-left' | 'up-center' | 'up-right' | 'center-right' | 'down-right' | 'down-center' | 'down-left' | 'center-left'
+
 window.onerror = (msg, src, line, col, err) => {
     if (!DEBUG) {
         alert(`Please screenshot this and report it!\n${msg}\nin ${src}:(${line},${col})`)
@@ -26,7 +29,7 @@ export const droneSchematics = [
 
 export class EnemySchematic {
 
-    constructor(public name: string, public create: (x: number, y: number, facing: UnitBase['facing'], schematic: EnemySchematic) => Enemy) {
+    constructor(public name: string, public create: (x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) => Enemy) {
 
     }
 }
@@ -80,25 +83,31 @@ export class Floor extends EntityBase {
     fgTileset!: Phaser.Tilemaps.Tileset
     bgLayer!: Phaser.Tilemaps.TilemapLayer
     fgLayer!: Phaser.Tilemaps.TilemapLayer
-    grid!: Phaser.GameObjects.Grid
+    debugGrid!: Phaser.GameObjects.Grid
+    debugGfx!: Phaser.GameObjects.Graphics
+    debugLayer!: Phaser.Tilemaps.TilemapLayer
     collider!: Phaser.Physics.Arcade.Collider
 
     spawn(scene: Phaser.Scene) {
         super.spawn(scene)
         this.map = this.scene.make.tilemap({ key: 'tilemap' })
+
         this.bgTileset = this.map.addTilesetImage('Test-Tiles', 'tileset-tiles')
         this.fgTileset = this.map.addTilesetImage('Test-BlockTile', 'tileset-blocks')
 
-        this.bgLayer = this.map.createLayer('Floors', this.bgTileset, -480 + -128, -480 + -128 + 0)
-        this.fgLayer = this.map.createLayer('Walls', this.fgTileset, -480 + -128, -480 + -128 + -8)
+        this.bgLayer = this.map.createLayer('Floors', this.bgTileset, -128, -512 + -128 + 0)
+        this.fgLayer = this.map.createLayer('Walls', this.fgTileset, -128, -1024 + -128 + -8)
 
         this.bgLayer.setDepth(-9001)
         this.fgLayer.setDepth(-9000)
-        this.fgLayer.setCollisionBetween(0, 1, false)
-        this.fgLayer.setCollisionBetween(2, 999, true)
+        this.fgLayer.setCollisionByExclusion([-1, 0, 1, 1024, 1025])
+
+        this.floorIndex = gameState.floors.indexOf(this)
 
         if (DEBUG) {
-            this.grid = this.scene.add.grid(0, 0, 1024, 1024, 32, 32, undefined, undefined, 0xFF00FF, 0.25)
+            this.debugGrid = this.scene.add.grid(0, 0, 1024, 1024, 32, 32, undefined, undefined, 0xFF00FF, 0.25)
+            this.debugGfx = this.scene.add.graphics({ x: 0, y: 0 })
+            this.debugLayer = this.fgLayer.renderDebug(this.debugGfx)
         }
 
         this.collider = this.scene.physics.add.collider(gameState.player.sprite, this.fgLayer)
@@ -109,7 +118,9 @@ export class Floor extends EntityBase {
         if (this.map) this.map.destroy()
         if (this.bgLayer) this.bgLayer.destroy()
         if (this.fgLayer) this.fgLayer.destroy()
-        if (this.grid) this.grid.destroy()
+        if (this.debugGrid) this.debugGrid.destroy()
+        if (this.debugGfx) this.debugGfx.destroy()
+        if (this.debugLayer) this.debugLayer.destroy()
         if (this.collider) this.collider.destroy()
     }
 
@@ -150,6 +161,7 @@ export abstract class ActorBase extends EntityBase {
 }
 
 export abstract class UnitBase extends ActorBase {
+    shadowSprite!: Phaser.GameObjects.Sprite
     hurtTime: number = 0
     hurtDirX: number = 0
     hurtDirY: number = 0
@@ -161,13 +173,21 @@ export abstract class UnitBase extends ActorBase {
 
     get isHurting() { return this.hurtTime > 0 }
 
+    abstract get hovering(): boolean
+
     constructor(x: number, y: number, public power: number, public maxPower: number = power) {
         super(x, y)
     }
 
     spawn(scene: Phaser.Scene) {
         super.spawn(scene)
+        this.shadowSprite = this.scene.add.sprite(this.x, this.y, 'drop-shadow')
         this.body.setSize(24, 24)
+    }
+
+    despawn() {
+        super.despawn()
+        if (this.shadowSprite) this.shadowSprite.destroy()
     }
 
     update(t: number, dt: number) {
@@ -180,6 +200,8 @@ export abstract class UnitBase extends ActorBase {
     postUpdate() {
         super.postUpdate()
         if (!this.active) return
+        this.shadowSprite.setPosition(this.sprite.x, this.sprite.y + (this.hovering ? 6 : -2))
+        this.shadowSprite.setDepth(this.sprite.depth - 1)
         if (this.power <= 0 && !this.dead) this.die()
     }
 
@@ -206,6 +228,7 @@ export class Player extends UnitBase {
     schematicIndex: number = 0
 
     get spriteKey() { return 'player' }
+    get hovering() { return true }
 
     constructor() {
         super(0, 0, 50, 100)
@@ -306,10 +329,9 @@ export abstract class DroneBase extends UnitBase {
     attachSprite!: Phaser.GameObjects.Sprite
     barSprite!: Phaser.GameObjects.Sprite
 
-    abstract get hovering(): boolean
     abstract get attachSpriteKey(): string
 
-    constructor(x: number, y: number, facing: UnitBase['facing'], power: number) {
+    constructor(x: number, y: number, facing: Facing4Way, power: number) {
         super(x, y, power)
         this.facing = facing
     }
@@ -379,7 +401,7 @@ export class Drone extends DroneBase {
     get spriteKey() { return 'drone-core' }
     get attachSpriteKey() { return 'drone-gun' }
 
-    constructor(x: number, y: number, facing: UnitBase['facing'], public schematic: DroneSchematic) {
+    constructor(x: number, y: number, facing: Facing4Way, public schematic: DroneSchematic) {
         super(x, y, facing, schematic.cost)
     }
 
@@ -403,7 +425,7 @@ export class Drone extends DroneBase {
         if (this.power > 0 && !this.dead) {
             const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
             const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
-            gameState.bullets.push(new BulletPulse(this.x, this.y, dx, dy, 256, 1, true, 5))
+            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 256, 1, true, 5))
             this.power--
         }
     }
@@ -418,7 +440,7 @@ export abstract class Enemy extends DroneBase {
 
     get spriteKey() { return this.hovering ? 'enemy-core-hover' : 'enemy-core' }
 
-    constructor(x: number, y: number, facing: UnitBase['facing'], power: number, public impactDamage: number, public schematic: EnemySchematic) {
+    constructor(x: number, y: number, facing: Facing4Way, power: number, public impactDamage: number, public schematic: EnemySchematic) {
         super(x, y, facing, power)
     }
 
@@ -458,7 +480,7 @@ export class EnemyTurret extends Enemy {
     get hovering() { return false }
     get attachSpriteKey() { return 'enemy-gun' }
 
-    constructor(x: number, y: number, facing: UnitBase['facing'], schematic: EnemySchematic) {
+    constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
         super(x, y, facing, 20, 5, schematic)
     }
 
@@ -470,7 +492,7 @@ export class EnemyTurret extends Enemy {
         else if (this.facing === 'left') this.facing = 'up'
         const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
         const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
-        gameState.bullets.push(new BulletPulse(this.x, this.y, dx, dy, 256, 1, false, 5))
+        gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 256, 1, false, 5))
     }
 }
 
@@ -478,7 +500,7 @@ export class EnemyHoverTurret extends Enemy {
     get hovering() { return true }
     get attachSpriteKey() { return 'enemy-gun-hover' }
 
-    constructor(x: number, y: number, facing: UnitBase['facing'], schematic: EnemySchematic) {
+    constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
         super(x, y, facing, 20, 5, schematic)
     }
 
@@ -490,7 +512,7 @@ export class EnemyHoverTurret extends Enemy {
         else if (this.facing === 'left') this.facing = 'up'
         const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
         const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
-        gameState.bullets.push(new BulletPulse(this.x, this.y, dx, dy, 256, 1, false, 5))
+        gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 256, 1, false, 5))
     }
 }
 
@@ -607,16 +629,36 @@ export abstract class BulletBase extends ActorBase {
 
 export class BulletPulse extends BulletBase {
 
-    get spriteKey() { return 'placeholder' }
+    get spriteKey() { return this.friendly ? 'projectile-ally' : 'projectile-enemy' }
 
     constructor(x: number, y: number, dx: number, dy: number, speed: number, lifetime: number, public friendly: boolean, public damage: number) {
         super(x, y, dx, dy, speed, lifetime)
+    }
+
+    initialize() {
+        super.initialize()
+        this.scene.anims.create({ key: `bullet-up-left-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 0, end: 0 }), frameRate: 5, repeat: -1 })
+        this.scene.anims.create({ key: `bullet-up-center-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 1, end: 1 }), frameRate: 5, repeat: -1 })
+        this.scene.anims.create({ key: `bullet-up-right-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 2, end: 2 }), frameRate: 5, repeat: -1 })
+        this.scene.anims.create({ key: `bullet-center-right-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 3, end: 3 }), frameRate: 5, repeat: -1 })
+        this.scene.anims.create({ key: `bullet-down-right-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 4, end: 4 }), frameRate: 5, repeat: -1 })
+        this.scene.anims.create({ key: `bullet-down-center-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 5, end: 5 }), frameRate: 5, repeat: -1 })
+        this.scene.anims.create({ key: `bullet-down-left-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 6, end: 6 }), frameRate: 5, repeat: -1 })
+        this.scene.anims.create({ key: `bullet-center-left-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 7, end: 7 }), frameRate: 5, repeat: -1 })
     }
 
     hit(target: Player | Drone | Enemy) {
         if (this.friendly === (target instanceof Player || target instanceof Drone)) return
         target.hurt(this.damage, this)
         return true
+    }
+
+    postUpdate() {
+        super.postUpdate()
+        if (!this.active) return
+        const f: Facing8Way = `${this.dy < 0 ? 'up' : this.dy > 0 ? 'down' : 'center'}-${this.dx < 0 ? 'left' : this.dx > 0 ? 'right' : 'center'}` as const
+        const key = `bullet-${f}-${this.spriteKey}`
+        this.sprite.anims.play(key, true)
     }
 }
 
@@ -694,8 +736,11 @@ export class GameplayScene extends Phaser.Scene {
         this.load.spritesheet('enemy-core-hover', 'assets/Enemy-Core-Hovering.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-gun-hover', 'assets/Enemy-Gun-Hovering.png', { frameWidth: 32 })
         this.load.spritesheet('power-bar', 'assets/Power-Bar.png', { frameWidth: 32 })
+        this.load.spritesheet('drop-shadow', 'assets/DropShadow.png', { frameWidth: 32 })
         this.load.spritesheet('pickup-energy', 'assets/Pickup-Energy.png', { frameWidth: 8 })
         this.load.image('destructible-power-core', 'assets/Destructable-Powercore.png')
+        this.load.spritesheet('projectile-ally', 'assets/Projectile-Ally.png', { frameWidth: 32 })
+        this.load.spritesheet('projectile-enemy', 'assets/Projectile-Enemy.png', { frameWidth: 32 })
     }
 
     create() {
