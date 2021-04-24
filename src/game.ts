@@ -18,18 +18,18 @@ function dist(a: { x: number, y: number }, b: { x: number, y: number }) {
 }
 
 export class DroneSchematic {
-    constructor(public name: string, public cost: number, public create: (creator: Player, schematic: DroneSchematic) => Drone) {
+    constructor(public name: string, public cost: number, public create: (creator: Player, schematic: DroneSchematic) => DroneBase) {
 
     }
 }
 
 export const droneSchematics = [
-    new DroneSchematic('Turret', 10, (p, s) => new Drone(p.x, p.y, p.facing, s)),
+    new DroneSchematic('Turret', 10, (p, s) => new DroneTurret(p.x, p.y, p.facing, s)),
 ]
 
 export class EnemySchematic {
 
-    constructor(public name: string, public create: (x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) => Enemy) {
+    constructor(public name: string, public create: (x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) => EnemyBase) {
 
     }
 }
@@ -37,6 +37,7 @@ export class EnemySchematic {
 export const enemySchematics = [
     new EnemySchematic('Turret', (x, y, facing, s) => new EnemyTurret(x, y, facing, s)),
     new EnemySchematic('Hover Turret', (x, y, facing, s) => new EnemyHoverTurret(x, y, facing, s)),
+    new EnemySchematic('Hover Puncher', (x, y, facing, s) => new EnemyHoverPunch(x, y, facing, s)),
 ]
 
 export abstract class EntityBase {
@@ -88,6 +89,30 @@ export class Floor extends EntityBase {
     debugLayer!: Phaser.Tilemaps.TilemapLayer
     collider!: Phaser.Physics.Arcade.Collider
 
+    roomUpType: number = -1
+    roomRightType: number = -1
+    roomDownType: number = -1
+    roomLeftType: number = -1
+
+    get hasRoomUp() { return this.roomUpType >= 0 || this.isBossFloor }
+    get hasRoomRight() { return this.roomRightType >= 0 }
+    get hasRoomDown() { return this.roomDownType >= 0 }
+    get hasRoomLeft() { return this.roomLeftType >= 0 }
+
+    get floorNumber() { return this.floorIndex % 5 }
+    get isTopFloor() { return this.floorNumber === 0 }
+    get isBossFloor() { return this.floorNumber === 4 }
+
+    initialize() {
+        super.initialize()
+        this.floorIndex = gameState.floors.indexOf(this)
+
+        this.roomUpType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
+        this.roomRightType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
+        this.roomDownType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
+        this.roomLeftType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
+    }
+
     spawn(scene: Phaser.Scene) {
         super.spawn(scene)
         this.map = this.scene.make.tilemap({ key: 'tilemap' })
@@ -95,14 +120,65 @@ export class Floor extends EntityBase {
         this.bgTileset = this.map.addTilesetImage('Test-Tiles', 'tileset-tiles')
         this.fgTileset = this.map.addTilesetImage('Test-BlockTile', 'tileset-blocks')
 
-        this.bgLayer = this.map.createLayer('Floors', this.bgTileset, -384, -1024 + -128 + 0)
-        this.fgLayer = this.map.createLayer('Walls', this.fgTileset, -384, -1024 + -128 + -8)
+        this.bgLayer = this.map.createLayer('Floors', this.bgTileset, -384, -1024 + -128 + 8)
+        this.fgLayer = this.map.createLayer('Walls', this.fgTileset, -384, -1024 + -128 + 0)
 
         this.bgLayer.setDepth(-9001)
         this.fgLayer.setDepth(-9000)
         this.fgLayer.setCollisionByExclusion([-1, 0, 1, 1024, 1025])
 
-        this.floorIndex = gameState.floors.indexOf(this)
+        // Elevator floor indicators
+        this.setTile(9, 32, 32 * this.floorNumber + 6)
+        this.setTile(10, 32, 32 * this.floorNumber + 7)
+        this.setTile(13, 32, 32 * this.floorNumber + 4)
+        this.setTile(14, 32, 32 * this.floorNumber + 5)
+
+        // Elevator buttons
+        this.setTile(9, 33, null, this.isBossFloor ? 194 : 192)
+        this.setTile(10, 33, null, this.isBossFloor ? 195 : 193)
+        this.setTile(13, 33, null, this.isTopFloor ? 194 : 192)
+        this.setTile(14, 33, null, this.isTopFloor ? 195 : 193)
+
+        // Boss rooms
+        if (this.isBossFloor) {
+
+        } else {
+            this.clearRect(0, 0, 24, 24)
+        }
+
+        if (this.hasRoomUp) {
+
+        } else {
+            this.clearRect(8, 24, 8, 8)
+        }
+
+        if (this.hasRoomRight) {
+
+        } else {
+            this.clearRect(16, 32, 8, 8)
+        }
+
+        if (this.hasRoomDown) {
+
+        } else {
+            this.clearRect(8, 40, 8, 8)
+        }
+
+        if (this.hasRoomLeft) {
+
+        } else {
+            this.clearRect(0, 32, 8, 8)
+        }
+
+        // Elevator doors
+        this.setTile(11, 32, this.hasRoomUp ? -1 : 164, this.hasRoomUp ? 160 : -1)
+        this.setTile(12, 32, this.hasRoomUp ? -1 : 165, this.hasRoomUp ? 161 : -1)
+        this.setTile(11, 39, this.hasRoomDown ? -1 : 164, this.hasRoomDown ? 160 : -1)
+        this.setTile(12, 39, this.hasRoomDown ? -1 : 165, this.hasRoomDown ? 161 : -1)
+        this.setTile(8, 35, this.hasRoomLeft ? -1 : 166, this.hasRoomLeft ? 162 : -1)
+        this.setTile(8, 36, this.hasRoomLeft ? -1 : 167, this.hasRoomLeft ? 163 : -1)
+        this.setTile(15, 35, this.hasRoomRight ? -1 : 166, this.hasRoomRight ? 162 : -1)
+        this.setTile(15, 36, this.hasRoomRight ? -1 : 167, this.hasRoomRight ? 163 : -1)
 
         if (DEBUG) {
             this.debugGrid = this.scene.add.grid(0, 0, 1024, 1024, 32, 32, undefined, undefined, 0xFF00FF, 0.25)
@@ -130,6 +206,33 @@ export class Floor extends EntityBase {
     update(t: number, dt: number) {
         super.update(t, dt)
         if (!this.active) return
+    }
+
+    private setTile(x: number, y: number, fgIndex?: number | null, bgIndex?: number | null) {
+        if (fgIndex) {
+            this.fgLayer.putTileAt(1024 + 1 + fgIndex, x, y)
+            this.fgLayer.getTileAt(x, y)?.setSize(32, 40, 32, 32)
+        }
+        if (bgIndex) this.bgLayer.putTileAt(1 + bgIndex, x, y)
+    }
+
+    private copyRect(sx: number, sy: number, dx: number, dy: number, w: number, h: number) {
+        for (let x = 0; x < w; x++) {
+            for (let y = 0; y < h; y++) {
+                this.fgLayer.putTileAt(this.fgLayer.getTileAt(sx + x, sy + y, true), dx + x, dy + y)
+                this.fgLayer.getTileAt(dx + x, dy + y)?.setSize(32, 40, 32, 32)
+                this.bgLayer.putTileAt(this.bgLayer.getTileAt(sx + x, sy + y, true), dx + x, dy + y)
+            }
+        }
+    }
+
+    private clearRect(dx: number, dy: number, w: number, h: number) {
+        for (let x = 0; x < w; x++) {
+            for (let y = 0; y < h; y++) {
+                this.fgLayer.putTileAt(-1, dx + x, dy + y)
+                this.bgLayer.putTileAt(-1, dx + x, dy + y)
+            }
+        }
     }
 }
 
@@ -173,9 +276,12 @@ export abstract class UnitBase extends ActorBase {
 
     get tileX() { return this.x / 32 + 0.5 }
     get tileY() { return this.y / 32 + 0.5 }
+    get mapX() { return this.floor.fgLayer.getTileAtWorldXY(this.x, this.y, true).x }
+    get mapY() { return this.floor.fgLayer.getTileAtWorldXY(this.x, this.y, true).y }
 
     get isHurting() { return this.hurtTime > 0 }
 
+    abstract get invulnPeriod(): number
     abstract get hovering(): boolean
 
     constructor(x: number, y: number, public power: number, public maxPower: number = power) {
@@ -212,7 +318,7 @@ export abstract class UnitBase extends ActorBase {
         if (!this.isHurting && !this.dead) {
             const dmg = Math.min(this.power, damage)
             this.power -= dmg
-            this.hurtTime = 1
+            this.hurtTime = this.invulnPeriod
             const dir = new Phaser.Math.Vector2(this.sprite.x - inflictor.sprite.x, this.sprite.y - inflictor.sprite.y).normalize()
             this.hurtDirX = dir.x
             this.hurtDirY = dir.y
@@ -232,6 +338,7 @@ export class Player extends UnitBase {
 
     get spriteKey() { return 'player' }
     get hovering() { return true }
+    get invulnPeriod() { return 1 }
 
     constructor() {
         super(0, 0, 50, 100)
@@ -328,7 +435,7 @@ export class Player extends UnitBase {
     }
 }
 
-export abstract class DroneBase extends UnitBase {
+export abstract class DroneLikeBase extends UnitBase {
     attachSprite!: Phaser.GameObjects.Sprite
     barSprite!: Phaser.GameObjects.Sprite
 
@@ -376,8 +483,8 @@ export abstract class DroneBase extends UnitBase {
     update(t: number, dt: number) {
         super.update(t, dt)
         if (!this.active) return
-        const tick = Math.floor(t / gameState.tickRate)
-        if (t >= tick && t - dt <= tick) {
+        const tick = Math.floor(t / gameState.tickRate) * gameState.tickRate
+        if (t / gameState.tickRate >= tick && t - dt <= tick) {
             this.tick()
         }
     }
@@ -398,11 +505,10 @@ export abstract class DroneBase extends UnitBase {
     }
 }
 
-export class Drone extends DroneBase {
+export abstract class DroneBase extends DroneLikeBase {
 
-    get hovering() { return false }
     get spriteKey() { return 'drone-core' }
-    get attachSpriteKey() { return 'drone-gun' }
+    get invulnPeriod() { return 1 }
 
     constructor(x: number, y: number, facing: Facing4Way, public schematic: DroneSchematic) {
         super(x, y, facing, schematic.cost)
@@ -425,23 +531,29 @@ export class Drone extends DroneBase {
 
     tick() {
         super.tick()
-        if (this.power > 0 && !this.dead) {
-            const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
-            const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
-            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 256, 1, true, 5))
-            this.power--
-        }
-    }
-
-    die() {
-        super.die()
     }
 }
 
-export abstract class Enemy extends DroneBase {
+export class DroneTurret extends DroneBase {
+    get attachSpriteKey() { return 'drone-gun' }
+    get hovering() { return false }
+
+    tick() {
+        super.tick()
+        if (this.power > 0 && !this.dead) {
+            const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
+            const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
+            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, true, 5))
+            this.power--
+        }
+    }
+}
+
+export abstract class EnemyBase extends DroneLikeBase {
     collider!: Phaser.Physics.Arcade.Collider
 
     get spriteKey() { return this.hovering ? 'enemy-core-hover' : 'enemy-core' }
+    get invulnPeriod() { return 0 }
 
     constructor(x: number, y: number, facing: Facing4Way, power: number, public impactDamage: number, public schematic: EnemySchematic) {
         super(x, y, facing, power)
@@ -479,27 +591,33 @@ export abstract class Enemy extends DroneBase {
     }
 }
 
-export class EnemyTurret extends Enemy {
+export class EnemyTurret extends EnemyBase {
+    subtick: number = 0
     get hovering() { return false }
     get attachSpriteKey() { return 'enemy-gun' }
 
     constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
-        super(x, y, facing, 20, 5, schematic)
+        super(x, y, facing, 15, 5, schematic)
     }
 
     tick() {
         super.tick()
-        if (this.facing === 'up') this.facing = 'right'
-        else if (this.facing === 'right') this.facing = 'down'
-        else if (this.facing === 'down') this.facing = 'left'
-        else if (this.facing === 'left') this.facing = 'up'
-        const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
-        const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
-        gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 256, 1, false, 5))
+        if (this.subtick === 0) {
+            if (this.facing === 'up') this.facing = 'right'
+            else if (this.facing === 'right') this.facing = 'down'
+            else if (this.facing === 'down') this.facing = 'left'
+            else if (this.facing === 'left') this.facing = 'up'
+        } else if (this.subtick === 1) {
+            const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
+            const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
+            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, false, 5))
+        }
+        this.subtick = (this.subtick + 1) % 2
     }
 }
 
-export class EnemyHoverTurret extends Enemy {
+export class EnemyHoverTurret extends EnemyBase {
+    subtick: number = 0
     get hovering() { return true }
     get attachSpriteKey() { return 'enemy-gun-hover' }
 
@@ -509,13 +627,45 @@ export class EnemyHoverTurret extends Enemy {
 
     tick() {
         super.tick()
-        if (this.facing === 'up') this.facing = 'right'
-        else if (this.facing === 'right') this.facing = 'down'
-        else if (this.facing === 'down') this.facing = 'left'
-        else if (this.facing === 'left') this.facing = 'up'
-        const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
-        const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
-        gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 256, 1, false, 5))
+        if (this.subtick === 0) {
+            let dx = gameState.player.sprite.x - this.sprite.x
+            let dy = gameState.player.sprite.y - this.sprite.y
+            if (Math.abs(dx) > Math.abs(dy))
+                this.facing = dx < 0 ? 'left' : 'right'
+            else
+                this.facing = dy < 0 ? 'up' : 'down'
+        } else if (this.subtick === 1) {
+            const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
+            const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
+            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, false, 5))
+        }
+        this.subtick = (this.subtick + 1) % 2
+    }
+}
+
+export class EnemyHoverPunch extends EnemyBase {
+    subtick: number = 0
+    get hovering() { return true }
+    get attachSpriteKey() { return 'enemy-punch-hover' }
+
+    constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
+        super(x, y, facing, 20, 10, schematic)
+    }
+
+    tick() {
+        super.tick()
+        const speed = 64
+        let dx = gameState.player.sprite.x - this.sprite.x
+        let dy = gameState.player.sprite.y - this.sprite.y
+        if (this.subtick === 0)
+            this.facing = dx < 0 ? 'left' : 'right'
+        else if (this.subtick === 1)
+            this.facing = dy < 0 ? 'up' : 'down'
+
+        dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
+        dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
+        this.body.setVelocity(dx * speed, dy * speed)
+        this.subtick = (this.subtick + 1) % 2
     }
 }
 
@@ -627,7 +777,7 @@ export abstract class BulletBase extends ActorBase {
         if (this.lifetime <= 0) this.destroy()
     }
 
-    abstract hit(target: Player | Drone | Enemy): boolean | undefined
+    abstract hit(target: Player | DroneBase | EnemyBase): boolean | undefined
 }
 
 export class BulletPulse extends BulletBase {
@@ -650,8 +800,8 @@ export class BulletPulse extends BulletBase {
         this.scene.anims.create({ key: `bullet-center-left-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 7, end: 7 }), frameRate: 5, repeat: -1 })
     }
 
-    hit(target: Player | Drone | Enemy) {
-        if (this.friendly === (target instanceof Player || target instanceof Drone)) return
+    hit(target: Player | DroneBase | EnemyBase) {
+        if (this.friendly === (target instanceof Player || target instanceof DroneBase)) return
         target.hurt(this.damage, this)
         return true
     }
@@ -691,10 +841,11 @@ export class InteractablePowerCore extends InteractableBase {
 
 export class GameState {
     player: Player = new Player()
-    drones: Drone[] = []
-    enemies: Enemy[] = [
-        enemySchematics[0].create(256, 64, 'down', enemySchematics[0]),
-        enemySchematics[1].create(240, -32, 'right', enemySchematics[1]),
+    drones: DroneBase[] = []
+    enemies: EnemyBase[] = [
+        new EnemyTurret(256, 64, 'down', enemySchematics[0]),
+        new EnemyHoverTurret(240, -32, 'right', enemySchematics[1]),
+        new EnemyHoverPunch(272, 32, 'left', enemySchematics[2]),
     ]
     drops: DropBase[] = []
     bullets: BulletBase[] = []
@@ -702,7 +853,7 @@ export class GameState {
     floors: Floor[] = [new Floor()]
     floorIndex: number = 0
 
-    tickRate: number = 1.0
+    tickRate: number = 0.5
 
     playerGroup!: Phaser.GameObjects.Group
     droneGroup!: Phaser.GameObjects.Group
@@ -738,6 +889,7 @@ export class GameplayScene extends Phaser.Scene {
         this.load.spritesheet('enemy-gun', 'assets/Enemy-Gun-Stationary.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-core-hover', 'assets/Enemy-Core-Hovering.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-gun-hover', 'assets/Enemy-Gun-Hovering.png', { frameWidth: 32 })
+        this.load.spritesheet('enemy-punch-hover', 'assets/Enemy-Punch-Hovering.png', { frameWidth: 32 })
         this.load.spritesheet('power-bar', 'assets/Power-Bar.png', { frameWidth: 32 })
         this.load.spritesheet('drop-shadow', 'assets/DropShadow.png', { frameWidth: 32 })
         this.load.spritesheet('pickup-energy', 'assets/Pickup-Energy.png', { frameWidth: 8 })
@@ -766,7 +918,7 @@ export class GameplayScene extends Phaser.Scene {
             let str = s ? `${s.name}:${s.cost}` : `empty`
             if (i === gameState.player.schematicIndex) str = `(${str})`
             return str
-        }).join(' ')}`)
+        }).join(' ')}\n${gameState.player.mapX}, ${gameState.player.mapY}`)
     }
 }
 
