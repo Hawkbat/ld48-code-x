@@ -95,7 +95,7 @@ export class Floor extends EntityBase {
         this.bgTileset = this.map.addTilesetImage('Test-Tiles', 'tileset-tiles')
         this.fgTileset = this.map.addTilesetImage('Test-BlockTile', 'tileset-blocks')
 
-        this.bgLayer = this.map.createLayer('Floors', this.bgTileset, -128, -512 + -128 + 0)
+        this.bgLayer = this.map.createLayer('Floors', this.bgTileset, -128 + -512, -512 + -128 + 0)
         this.fgLayer = this.map.createLayer('Walls', this.fgTileset, -128, -1024 + -128 + -8)
 
         this.bgLayer.setDepth(-9001)
