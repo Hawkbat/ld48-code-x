@@ -6,11 +6,32 @@ const DEBUG = false
 type Facing4Way = 'up' | 'right' | 'down' | 'left'
 type Facing8Way = 'center-center' | 'up-left' | 'up-center' | 'up-right' | 'center-right' | 'down-right' | 'down-center' | 'down-left' | 'center-left'
 
+const FACING_4WAY: Facing4Way[] = ['up', 'right', 'down', 'left']
+const FACING_8WAY: Facing8Way[] = ['up-left', 'up-center', 'up-right', 'center-right', 'down-right', 'down-center', 'down-left', 'center-left']
+
 window.onerror = (msg, src, line, col, err) => {
     if (!DEBUG) {
         alert(`Please screenshot this and report it!\n${msg}\nin ${src}:(${line},${col})`)
     }
     console.error(err)
+}
+
+function rand(max: number, min: number = 0) {
+    return min + Math.floor((max + 1 - min) * Math.random())
+}
+
+function randItem<T>(array: T[]): T | null {
+    if (array.length === 0) return null
+    return array[rand(array.length - 1)]
+}
+
+function shuffle<T>(array: T[]): T[] {
+    const a = [...array]
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = rand(i);
+        [a[i], a[j]] = [a[j], a[i]]
+    }
+    return a
 }
 
 function dist(a: { x: number, y: number }, b: { x: number, y: number }) {
@@ -36,19 +57,19 @@ export const droneSchematics = [
 
 export class EnemySchematic {
 
-    constructor(public name: string, public create: (x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) => EnemyBase) {
+    constructor(public name: string, public cost: number, public create: (x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) => EnemyBase) {
 
     }
 }
 
 export const enemySchematics = [
-    new EnemySchematic('Turret', (x, y, facing, s) => new EnemyGun(x, y, facing, s)),
-    new EnemySchematic('Hover Turret', (x, y, facing, s) => new EnemyHoverGun(x, y, facing, s)),
-    new EnemySchematic('Hover Puncher', (x, y, facing, s) => new EnemyHoverPunch(x, y, facing, s)),
-    new EnemySchematic('Spin Boomerang', (x, y, facing, s) => new EnemySpinBoomerang(x, y, facing, s)),
-    new EnemySchematic('Directional Turret', (x, y, facing, s) => new EnemyDirectionalTurret(x, y, facing, s)),
-    new EnemySchematic('Multishot Turret', (x, y, facing, s) => new EnemyMultishot(x, y, facing, s)),
-    new EnemySchematic('Hover Multishot', (x, y, facing, s) => new EnemyHoverMultishot(x, y, facing, s)),
+    new EnemySchematic('Turret', 10, (x, y, facing, s) => new EnemyGun(x, y, facing, s)),
+    new EnemySchematic('Hover Turret', 15, (x, y, facing, s) => new EnemyHoverGun(x, y, facing, s)),
+    new EnemySchematic('Spin Boomerang', 15, (x, y, facing, s) => new EnemySpinBoomerang(x, y, facing, s)),
+    new EnemySchematic('Directional Turret', 15, (x, y, facing, s) => new EnemyDirectionalTurret(x, y, facing, s)),
+    new EnemySchematic('Hover Puncher', 20, (x, y, facing, s) => new EnemyHoverPunch(x, y, facing, s)),
+    new EnemySchematic('Multishot Turret', 20, (x, y, facing, s) => new EnemyMultishot(x, y, facing, s)),
+    new EnemySchematic('Hover Multishot', 25, (x, y, facing, s) => new EnemyHoverMultishot(x, y, facing, s)),
 ]
 
 export abstract class EntityBase {
@@ -100,15 +121,25 @@ export class Floor extends EntityBase {
     debugLayer!: Phaser.Tilemaps.TilemapLayer
     collider!: Phaser.Physics.Arcade.Collider
 
-    roomUpType: number = -1
-    roomRightType: number = -1
-    roomDownType: number = -1
-    roomLeftType: number = -1
+    hasSpawnedObjects: boolean = false
 
-    get hasRoomUp() { return this.roomUpType >= 0 || this.isBossFloor }
-    get hasRoomRight() { return this.roomRightType >= 0 }
-    get hasRoomDown() { return this.roomDownType >= 0 }
-    get hasRoomLeft() { return this.roomLeftType >= 0 }
+    roomUpLeftType: number = -1
+    roomUpCenterType: number = -1
+    roomUpRightType: number = -1
+    roomCenterRightType: number = -1
+    roomDownRightType: number = -1
+    roomDownCenterType: number = -1
+    roomDownLeftType: number = -1
+    roomCenterLeftType: number = -1
+
+    get hasRoomUpLeft() { return this.roomUpLeftType >= 0 }
+    get hasRoomUpCenter() { return this.roomUpCenterType >= 0 || this.isBossFloor }
+    get hasRoomUpRight() { return this.roomUpRightType >= 0 }
+    get hasRoomCenterRight() { return this.roomCenterRightType >= 0 }
+    get hasRoomDownRight() { return this.roomDownRightType >= 0 }
+    get hasRoomDownCenter() { return this.roomDownCenterType >= 0 }
+    get hasRoomDownLeft() { return this.roomDownLeftType >= 0 }
+    get hasRoomCenterLeft() { return this.roomCenterLeftType >= 0 }
 
     get floorNumber() { return this.floorIndex % 5 }
     get isTopFloor() { return this.floorNumber === 0 }
@@ -118,10 +149,15 @@ export class Floor extends EntityBase {
         super.initialize()
         this.floorIndex = gameState.floors.indexOf(this)
 
-        this.roomUpType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
-        this.roomRightType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
-        this.roomDownType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
-        this.roomLeftType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
+        this.roomUpCenterType = this.randomRoomType()
+        this.roomCenterRightType = this.randomRoomType()
+        this.roomDownCenterType = this.randomRoomType()
+        this.roomCenterLeftType = this.randomRoomType()
+
+        if (this.hasRoomCenterLeft || this.hasRoomUpCenter) this.roomUpLeftType = this.randomRoomType()
+        if (this.hasRoomUpCenter || this.hasRoomCenterRight) this.roomUpRightType = this.randomRoomType()
+        if (this.hasRoomCenterRight || this.hasRoomDownCenter) this.roomDownRightType = this.randomRoomType()
+        if (this.hasRoomDownCenter || this.hasRoomCenterLeft) this.roomDownLeftType = this.randomRoomType()
     }
 
     spawn(scene: Phaser.Scene) {
@@ -136,7 +172,7 @@ export class Floor extends EntityBase {
 
         this.bgLayer.setDepth(-9001)
         this.fgLayer.setDepth(-9000)
-        this.fgLayer.setCollisionByExclusion([-1, 0, 1, 1024, 1025])
+        this.fgLayer.setCollisionByExclusion([-1])
 
         // Elevator floor indicators
         this.setTile(9, 32, 32 * this.floorNumber + 6)
@@ -157,39 +193,20 @@ export class Floor extends EntityBase {
             this.clearRect(0, 0, 24, 24)
         }
 
-        if (this.hasRoomUp) {
-
-        } else {
-            this.clearRect(8, 24, 8, 8)
+        this.setRoom(52, this.roomUpLeftType, 0, 24, null, this.hasRoomUpCenter, this.hasRoomCenterLeft, null)
+        if (!this.isBossFloor) {
+            this.setRoom(60, this.roomUpCenterType, 8, 24, null, this.hasRoomUpRight, true, this.hasRoomUpLeft)
         }
+        this.setRoom(68, this.roomUpRightType, 16, 24, null, null, this.hasRoomCenterRight, this.hasRoomUpCenter)
+        this.setRoom(76, this.roomCenterRightType, 16, 32, this.hasRoomUpRight, null, this.hasRoomDownRight, true)
+        this.setRoom(84, this.roomDownRightType, 16, 40, this.hasRoomCenterRight, null, null, this.hasRoomDownCenter)
+        this.setRoom(92, this.roomDownCenterType, 8, 40, true, this.hasRoomDownRight, null, this.hasRoomDownLeft)
+        this.setRoom(100, this.roomDownLeftType, 0, 40, this.hasRoomCenterLeft, this.hasRoomDownCenter, null, null)
+        this.setRoom(108, this.roomCenterLeftType, 0, 32, this.hasRoomUpLeft, true, this.hasRoomDownLeft, null)
 
-        if (this.hasRoomRight) {
+        this.setRoomDoors(8, 32, this.hasRoomUpCenter, this.hasRoomCenterRight, this.hasRoomDownCenter, this.hasRoomCenterLeft)
 
-        } else {
-            this.clearRect(16, 32, 8, 8)
-        }
-
-        if (this.hasRoomDown) {
-
-        } else {
-            this.clearRect(8, 40, 8, 8)
-        }
-
-        if (this.hasRoomLeft) {
-
-        } else {
-            this.clearRect(0, 32, 8, 8)
-        }
-
-        // Elevator doors
-        this.setTile(11, 32, this.hasRoomUp ? -1 : 164, this.hasRoomUp ? 160 : -1)
-        this.setTile(12, 32, this.hasRoomUp ? -1 : 165, this.hasRoomUp ? 161 : -1)
-        this.setTile(11, 39, this.hasRoomDown ? -1 : 164, this.hasRoomDown ? 160 : -1)
-        this.setTile(12, 39, this.hasRoomDown ? -1 : 165, this.hasRoomDown ? 161 : -1)
-        this.setTile(8, 35, this.hasRoomLeft ? -1 : 166, this.hasRoomLeft ? 162 : -1)
-        this.setTile(8, 36, this.hasRoomLeft ? -1 : 167, this.hasRoomLeft ? 163 : -1)
-        this.setTile(15, 35, this.hasRoomRight ? -1 : 166, this.hasRoomRight ? 162 : -1)
-        this.setTile(15, 36, this.hasRoomRight ? -1 : 167, this.hasRoomRight ? 163 : -1)
+        this.hasSpawnedObjects = true
 
         if (DEBUG) {
             this.debugGrid = this.scene.add.grid(0, 0, 1024, 1024, 32, 32, undefined, undefined, 0xFF00FF, 0.25)
@@ -225,6 +242,71 @@ export class Floor extends EntityBase {
         if (!this.active) return
     }
 
+    private spawnRoom(sx: number, sy: number) {
+        const tiles = shuffle(this.getEmptyTiles(sx + 1, sy + 1, 8 - 2, 8 - 2))
+        let enemyBudget = rand(1, 4 + this.floorIndex) * 10
+        const powerCores = rand(0, 2)
+        while (enemyBudget > 0 && tiles.length) {
+            const { x, y } = tiles.pop()!
+            const schematic = randItem(enemySchematics.filter(s => s.cost <= enemyBudget))
+            if (!schematic) break
+            enemyBudget -= schematic.cost
+            gameState.enemies.push(schematic.create(x, y, randItem(FACING_4WAY)!, schematic))
+        }
+        for (let i = 0; i < powerCores && tiles.length; i++) {
+            const { x, y } = tiles.pop()!
+            gameState.interactibles.push(new InteractablePowerCore(x, y))
+        }
+    }
+
+    private getEmptyTiles(sx: number, sy: number, w: number, h: number): { x: number, y: number }[] {
+        const values = []
+        for (let x = sx; x < sx + w; x++) {
+            for (let y = sy; y < sy + h; y++) {
+                const t = this.fgLayer.getTileAt(x, y, true)
+                if (t.index === -1) values.push({ x: t.getCenterX(), y: t.getCenterY() })
+            }
+        }
+        return values
+    }
+
+    private setRoom(sx: number, type: number, dx: number, dy: number, neighborUp: boolean | null, neighborRight: boolean | null, neighborDown: boolean | null, neighborLeft: boolean | null) {
+        if (type >= 0) {
+            this.copyRoom(sx, type * 8, dx, dy)
+            this.setRoomDoors(dx, dy, neighborUp, neighborRight, neighborDown, neighborLeft)
+            if (!this.hasSpawnedObjects) this.spawnRoom(dx, dy)
+        } else {
+            this.clearRoom(dx, dy)
+        }
+    }
+
+    private setRoomDoors(dx: number, dy: number, neighborUp: boolean | null, neighborRight: boolean | null, neighborDown: boolean | null, neighborLeft: boolean | null) {
+        if (neighborUp !== null) {
+            this.setTile(dx + 3, dy + 0, neighborUp ? -1 : 164, neighborUp ? 160 : -1)
+            this.setTile(dx + 4, dy + 0, neighborUp ? -1 : 165, neighborUp ? 161 : -1)
+        }
+        if (neighborDown !== null) {
+            this.setTile(dx + 3, dy + 7, neighborDown ? -1 : 164, neighborDown ? 160 : -1)
+            this.setTile(dx + 4, dy + 7, neighborDown ? -1 : 165, neighborDown ? 161 : -1)
+        }
+        if (neighborLeft !== null) {
+            this.setTile(dx + 0, dy + 3, neighborLeft ? -1 : 166, neighborLeft ? 162 : -1)
+            this.setTile(dx + 0, dy + 4, neighborLeft ? -1 : 167, neighborLeft ? 163 : -1)
+        }
+        if (neighborRight !== null) {
+            this.setTile(dx + 7, dy + 3, neighborRight ? -1 : 166, neighborRight ? 162 : -1)
+            this.setTile(dx + 7, dy + 4, neighborRight ? -1 : 167, neighborRight ? 163 : -1)
+        }
+    }
+
+    private copyRoom(sx: number, sy: number, dx: number, dy: number) {
+        return this.copyRect(sx, sy, dx, dy, 8, 8)
+    }
+
+    private clearRoom(dx: number, dy: number) {
+        return this.clearRect(dx, dy, 8, 8)
+    }
+
     private setTile(x: number, y: number, fgIndex?: number | null, bgIndex?: number | null) {
         if (fgIndex) {
             this.fgLayer.putTileAt(1024 + 1 + fgIndex, x, y)
@@ -250,6 +332,10 @@ export class Floor extends EntityBase {
                 this.bgLayer.putTileAt(-1, dx + x, dy + y)
             }
         }
+    }
+
+    private randomRoomType() {
+        return Math.random() > 0.25 ? rand(3) : -1
     }
 }
 
@@ -584,6 +670,7 @@ export abstract class DroneBase extends DroneLikeBase {
 
     tick() {
         super.tick()
+        this.power--
     }
 }
 
@@ -600,7 +687,6 @@ export class DroneGun extends DroneBase {
         const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
         const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
         gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, true, 5))
-        this.power--
     }
 }
 
@@ -629,7 +715,6 @@ export class DroneTracker extends DroneBase {
             gameState.bullets.push(new BulletTracker(this.x + dx * 16, this.y + dy * 16, dx, dy, true, 15))
         }
         this.subtick = (this.subtick + 1) % 2
-        this.power--
     }
 }
 
@@ -646,7 +731,6 @@ export class DroneHoverPunch extends DroneBase {
     tick() {
         super.tick()
         this.recalculateVelocity()
-        this.power--
         this.collisionDebounce--
     }
 
@@ -678,7 +762,7 @@ export class DroneSpinBoomerang extends DroneBase {
     get attachSpriteKey() { return 'drone-boomerang-spin' }
 
     constructor(x: number, y: number, facing: Facing4Way, schematic: DroneSchematic) {
-        super(x, y, facing, 10, schematic)
+        super(x, y, facing, 15, schematic)
     }
 
     tick() {
@@ -756,7 +840,7 @@ export abstract class EnemyBase extends DroneLikeBase {
         super.die()
         if (Math.random() < 0.1) {
             const choices = droneSchematics.filter(s => !gameState.player.schematics.includes(s))
-            if (choices.length) gameState.drops.push(new DropSchematic(this.x, this.y, choices[Math.floor(Math.random() * choices.length)]))
+            if (choices.length) gameState.drops.push(new DropSchematic(this.x, this.y, randItem(choices)!))
         } else {
             gameState.drops.push(new DropPower(this.x, this.y, 10))
         }
@@ -1204,18 +1288,10 @@ export class InteractablePowerCore extends InteractableBase {
 export class GameState {
     player: Player = new Player()
     drones: DroneBase[] = []
-    enemies: EnemyBase[] = [
-        new EnemyGun(256, 64, 'down', enemySchematics[0]),
-        new EnemyHoverGun(240, -32, 'right', enemySchematics[1]),
-        new EnemyHoverPunch(272, 32, 'left', enemySchematics[2]),
-        new EnemySpinBoomerang(64, 48, 'right', enemySchematics[3]),
-        new EnemyDirectionalTurret(64, 16, 'left', enemySchematics[4]),
-        new EnemyMultishot(240, 64, 'up', enemySchematics[5]),
-        new EnemyHoverMultishot(256, -64, 'left', enemySchematics[6]),
-    ]
+    enemies: EnemyBase[] = []
     drops: DropBase[] = []
     bullets: BulletBase[] = []
-    interactibles: InteractableBase[] = [new InteractablePowerCore(176, -80)]
+    interactibles: InteractableBase[] = []
     floors: Floor[] = [new Floor()]
     floorIndex: number = 0
 
