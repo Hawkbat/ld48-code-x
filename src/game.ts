@@ -399,17 +399,13 @@ export class Floor extends EntityBase {
     }
 
     private setHorizontalDoor(dx: number, dy: number, open: boolean) {
-        if (open) {
-            this.setTile(dx + 0, dy + 0, open ? -1 : 166, open ? 162 : -1)
-            this.setTile(dx + 0, dy + 1, open ? -1 : 167, open ? 163 : -1)
-        }
+        this.setTile(dx + 0, dy + 0, open ? -1 : 166, open ? 162 : -1)
+        this.setTile(dx + 0, dy + 1, open ? -1 : 167, open ? 163 : -1)
     }
 
     private setVerticalDoor(dx: number, dy: number, open: boolean) {
-        if (open) {
-            this.setTile(dx + 0, dy + 0, open ? -1 : 164, open ? 160 : -1)
-            this.setTile(dx + 1, dy + 0, open ? -1 : 165, open ? 161 : -1)
-        }
+        this.setTile(dx + 0, dy + 0, open ? -1 : 164, open ? 160 : -1)
+        this.setTile(dx + 1, dy + 0, open ? -1 : 165, open ? 161 : -1)
     }
 
 
@@ -1035,12 +1031,21 @@ export abstract class EnemyBase extends DroneLikeBase {
 }
 
 export class EnemyBoss extends EnemyBase {
+    waveCounter: number = 0
+
     get movementType() { return 'boss' as const }
     get attachSpriteKey() { return 'transparent' }
     get isInvulnerable() { return this.hurtTime > 0 || !gameState.pylons.filter(p => p.floorIndex === this.floorIndex && p.boss).every(p => p.isPowered) }
 
     constructor(floorIndex: number, x: number, y: number) {
         super(floorIndex, x, y, 'down', 200, 15, bossSchematic)
+    }
+
+    tick() {
+        super.tick()
+        if (!this.active) return
+        const pylonsActive = gameState.pylons.filter(p => p.floorIndex === this.floorIndex && p.boss && p.isPowered).length
+
     }
 
     die() {
