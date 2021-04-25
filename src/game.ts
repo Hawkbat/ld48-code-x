@@ -39,7 +39,12 @@ function dist(a: { x: number, y: number }, b: { x: number, y: number }) {
 }
 
 function get3dSound(ent: { x: number, y: number }) {
-    return { pan: Math.min(1, Math.max(-1, (ent.x - gameState.player.x) / 640)), volume: 1 - Math.min(1, Math.max(dist(ent, gameState.player) / 320)) }
+    return { pan: Math.min(1, Math.max(-1, (ent.x - gameState.player.x) / 320)), volume: 1 - Math.min(1, Math.max(dist(ent, gameState.player) / 320)) }
+}
+
+function destroyComponent<T extends { destroy(): void }>(c: T): T {
+    c?.destroy()
+    return null as any as T
 }
 
 export class DroneSchematic {
@@ -188,9 +193,9 @@ export class Floor extends EntityBase {
 
         // Boss rooms
         if (this.isBossFloor) {
-
+            this.copyRect(0, 92, 4, 0, 16, 32)
         } else {
-            this.clearRect(0, 0, 24, 24)
+            this.clearRect(0, 0, 24, 32)
         }
 
         this.setRoom(52, this.roomUpLeftType, 0, 24, null, this.hasRoomUpCenter, this.hasRoomCenterLeft, null)
@@ -228,13 +233,13 @@ export class Floor extends EntityBase {
 
     despawn() {
         super.despawn()
-        if (this.map) this.map.destroy()
-        if (this.bgLayer) this.bgLayer.destroy()
-        if (this.fgLayer) this.fgLayer.destroy()
-        if (this.debugGrid) this.debugGrid.destroy()
-        if (this.debugGfx) this.debugGfx.destroy()
-        if (this.debugLayer) this.debugLayer.destroy()
-        if (this.collider) this.collider.destroy()
+        this.map = destroyComponent(this.map)
+        this.bgLayer = destroyComponent(this.bgLayer)
+        this.fgLayer = destroyComponent(this.fgLayer)
+        this.debugGrid = destroyComponent(this.debugGrid)
+        this.debugGfx = destroyComponent(this.debugGfx)
+        this.debugLayer = destroyComponent(this.debugLayer)
+        this.collider = destroyComponent(this.collider)
     }
 
     update(t: number, dt: number) {
@@ -335,7 +340,7 @@ export class Floor extends EntityBase {
     }
 
     private randomRoomType() {
-        return Math.random() > 0.25 ? rand(3) : -1
+        return !this.isBossFloor && Math.random() > (0.25 + 0.25 * this.floorNumber) ? rand(3) : -1
     }
 }
 
@@ -357,7 +362,7 @@ export abstract class ActorBase extends EntityBase {
 
     despawn() {
         super.despawn()
-        if (this.sprite) this.sprite.destroy()
+        this.sprite = destroyComponent(this.sprite)
     }
 
     postUpdate() {
@@ -399,7 +404,7 @@ export abstract class UnitBase extends ActorBase {
 
     despawn() {
         super.despawn()
-        if (this.shadowSprite) this.shadowSprite.destroy()
+        this.shadowSprite = destroyComponent(this.shadowSprite)
     }
 
     update(t: number, dt: number) {
@@ -502,23 +507,18 @@ export class Player extends UnitBase {
         if (cursors.space.isDown && !this.placing) {
             this.placing = true
 
-            const d = gameState.drones.filter(d => dist(this.sprite, d) < 20).sort((a, b) => dist(this.sprite, a) - dist(this.sprite, b))[0]
+            const target = this.getTargetForInteract()
 
-            const i = gameState.interactibles.filter(i => dist(this.sprite, i) < 20).sort((a, b) => dist(this.sprite, a) - dist(this.sprite, b))[0]
-
-            if (d) {
-                const refund = Math.min(this.maxPower - this.power, d.power)
+            if (target instanceof DroneBase) {
+                const refund = Math.min(this.maxPower - this.power, target.power)
                 this.power += refund
-                d.destroy()
-            } else if (i) {
-                i.interact()
-            } else {
-                const s = this.schematics[this.schematicIndex]
-                if (s && this.power > s.cost && !gameState.drones.some(d => d.schematic === s)) {
-                    this.power -= s.cost
-                    const drone = s.create(this, s)
-                    gameState.drones.push(drone)
-                }
+                target.destroy()
+            } else if (target instanceof InteractableBase) {
+                target.interact()
+            } else if (target instanceof DroneSchematic) {
+                this.power -= target.cost
+                const drone = target.create(this, target)
+                gameState.drones.push(drone)
             }
         }
         if (!cursors.space.isDown && this.placing) this.placing = false
@@ -539,6 +539,17 @@ export class Player extends UnitBase {
     die() {
         super.die()
         this.body.setVelocity(0, 0)
+    }
+
+    getTargetForInteract() {
+        const d = gameState.drones.filter(d => dist(this.sprite, d) < 20).sort((a, b) => dist(this.sprite, a) - dist(this.sprite, b))[0]
+        if (d) return d
+
+        const i = gameState.interactibles.filter(i => dist(this.sprite, i) < 20).sort((a, b) => dist(this.sprite, a) - dist(this.sprite, b))[0]
+        if (i) return i
+
+        const s = this.schematics[this.schematicIndex]
+        if (s && this.power > s.cost && !gameState.drones.some(d => d.schematic === s)) return s
     }
 }
 
@@ -593,8 +604,8 @@ export abstract class DroneLikeBase extends UnitBase {
 
     despawn() {
         super.despawn()
-        if (this.attachSprite) this.attachSprite.destroy()
-        if (this.barSprite) this.barSprite.destroy()
+        this.attachSprite = destroyComponent(this.attachSprite)
+        this.barSprite = destroyComponent(this.barSprite)
     }
 
     update(t: number, dt: number) {
@@ -660,7 +671,7 @@ export abstract class DroneBase extends DroneLikeBase {
     despawn() {
         super.despawn()
         gameState.droneGroup.remove(this.sprite)
-        if (this.collider) this.collider.destroy()
+        this.collider = destroyComponent(this.collider)
     }
 
     destroy() {
@@ -828,7 +839,7 @@ export abstract class EnemyBase extends DroneLikeBase {
     despawn() {
         super.despawn()
         gameState.enemyGroup.remove(this.sprite)
-        if (this.collider) this.collider.destroy()
+        this.collider = destroyComponent(this.collider)
     }
 
     destroy() {
@@ -1098,7 +1109,7 @@ export abstract class DropBase extends ActorBase {
     despawn() {
         super.despawn()
         gameState.dropGroup.remove(this.sprite)
-        if (this.collider) this.collider.destroy()
+        this.collider = destroyComponent(this.collider)
     }
 
     destroy() {
@@ -1191,7 +1202,7 @@ export abstract class BulletBase extends ActorBase {
     despawn() {
         super.despawn()
         gameState.bulletGroup.remove(this.sprite)
-        if (this.collider) this.collider.destroy()
+        this.collider = destroyComponent(this.collider)
     }
 
     destroy() {
@@ -1262,6 +1273,8 @@ export class BulletTracker extends BulletBase {
 
 export abstract class InteractableBase extends ActorBase {
 
+    abstract get actionText(): string
+
     destroy() {
         super.destroy()
         gameState.interactibles.splice(gameState.interactibles.indexOf(this), 1)
@@ -1274,6 +1287,7 @@ export class InteractablePowerCore extends InteractableBase {
     power: number = 25
 
     get spriteKey() { return 'destructible-power-core' }
+    get actionText() { return `Pick up power core (+${this.power} power)` }
 
     interact() {
         if (gameState.player.power < gameState.player.maxPower) {
@@ -1384,16 +1398,32 @@ export class GameplayScene extends Phaser.Scene {
         for (const ent of gameState.entities.filter(e => e.floorIndex !== gameState.floorIndex && e.spawned)) ent.despawn()
         for (const ent of gameState.entities.filter(e => e.spawned && e.active)) ent.update(t / 1000, dt / 1000)
         for (const ent of gameState.entities.filter(e => e.spawned && e.active)) ent.postUpdate()
+
         this.text.setText(`Power: ${gameState.player.power}/${gameState.player.maxPower} Schematics: ${gameState.player.schematics.map((s, i) => {
             let str = s ? `${s.name}:${s.cost}` : `empty`
             if (i === gameState.player.schematicIndex) str = `(${str})`
             return str
-        }).join(' ')}\n${gameState.player.mapX}, ${gameState.player.mapY}`)
+        }).join(' ')}${this.getContextTargetText()}`)
 
         const tick = Math.floor(t / gameState.tickRate) * gameState.tickRate
         if (t / gameState.tickRate >= tick && t - dt <= tick) {
             if (!gameState.music.isPlaying) gameState.music.play()
         }
+    }
+
+    private getContextTargetText() {
+        let str = ''
+        const target = gameState.player.getTargetForInteract()
+        if (target instanceof DroneBase) {
+            str = `Pick up ${target.schematic.name} (+${target.power} power)`
+        }
+        if (target instanceof InteractableBase) {
+            str = target.actionText
+        }
+        if (target instanceof DroneSchematic) {
+            str = `Place ${target.name} (-${target.cost} power)`
+        }
+        return str ? `\n(space) ${str}` : ''
     }
 }
 
