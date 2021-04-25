@@ -356,8 +356,8 @@ export class Floor extends EntityBase {
 
     private spawnRoom(sx: number, sy: number) {
         const tiles = shuffle(this.getEmptyTiles(sx + 1, sy + 1, 8 - 2, 8 - 2))
-        let enemyBudget = rand(0, 3 + this.floorIndex) * 10
         const powerCores = rand(0, 2)
+        let enemyBudget = rand(0, 3 + this.floorIndex) * 10
         while (enemyBudget > 0 && tiles.length) {
             const { x, y } = tiles.pop()!
             const schematic = randItem(enemySchematics.filter(s => s.cost <= enemyBudget))
@@ -371,12 +371,12 @@ export class Floor extends EntityBase {
         }
     }
 
-    private getEmptyTiles(sx: number, sy: number, w: number, h: number): { x: number, y: number }[] {
+    public getEmptyTiles(sx: number, sy: number, w: number, h: number) {
         const values = []
         for (let x = sx; x < sx + w; x++) {
             for (let y = sy; y < sy + h; y++) {
                 const t = this.fgLayer.getTileAt(x, y, true)
-                if (t.index === -1) values.push({ x: t.getCenterX(), y: t.getCenterY() })
+                if (t.index === -1) values.push({ x: t.getCenterX(), y: t.getCenterY(), tx: x, ty: y })
             }
         }
         return values
@@ -391,6 +391,7 @@ export class Floor extends EntityBase {
             this.clearRoom(dx, dy)
         }
     }
+
     private setRoomDoors(dx: number, dy: number, neighborUp: boolean | null, neighborRight: boolean | null, neighborDown: boolean | null, neighborLeft: boolean | null) {
         if (neighborUp !== null) this.setVerticalDoor(dx + 3, dy + 0, neighborUp)
         if (neighborDown !== null) this.setVerticalDoor(dx + 3, dy + 7, neighborDown)
@@ -557,7 +558,7 @@ export class Player extends UnitBase {
     get invulnPeriod() { return 1 }
 
     constructor() {
-        super(4, 0, 0, 50, 100)
+        super(0, 0, 0, 150, 150)
     }
 
     initialize() {
@@ -1043,13 +1044,27 @@ export class EnemyBoss extends EnemyBase {
 
     tick() {
         super.tick()
-        if (!this.active) return
-        const pylonsActive = gameState.pylons.filter(p => p.floorIndex === this.floorIndex && p.boss && p.isPowered).length
-
+        if (!this.active || !this.floor.hasOpenedBossRoom) return
+        if (this.waveCounter === 8) {
+            const pylonsActive = gameState.pylons.filter(p => p.floorIndex === this.floorIndex && p.boss && p.isPowered).length
+            let enemyBudget = rand(1, 2 + pylonsActive) * 10
+            const tiles = this.floor.getEmptyTiles(this.mapX - 1, this.mapY - 1, 3, 3).filter(t => !gameState.enemies.some(e => e.floorIndex === this.floorIndex && e.mapX === t.tx && e.mapY === t.ty))
+            while (enemyBudget > 0 && tiles.length) {
+                const { x, y } = tiles.pop()!
+                const schematic = randItem(enemySchematics.filter(s => s.cost <= enemyBudget))
+                if (!schematic) break
+                enemyBudget -= schematic.cost
+                gameState.enemies.push(schematic.create(this.floorIndex, x, y, randItem(FACING_4WAY)!, schematic))
+            }
+            this.waveCounter = 0
+        } else {
+            this.waveCounter++
+        }
     }
 
     die() {
         super.die(true)
+        for (const e of gameState.enemies.filter(e => e.floorIndex === this.floorIndex)) e.power = 0
     }
 }
 
