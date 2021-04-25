@@ -17,6 +17,10 @@ function dist(a: { x: number, y: number }, b: { x: number, y: number }) {
     return Math.abs(b.x - a.x) + Math.abs(b.y - a.y)
 }
 
+function get3dSound(ent: { x: number, y: number }) {
+    return { pan: Math.min(1, Math.max(-1, (ent.x - gameState.player.x) / 640)), volume: 1 - Math.min(1, Math.max(dist(ent, gameState.player) / 640)) }
+}
+
 export class DroneSchematic {
     constructor(public name: string, public cost: number, public create: (creator: Player, schematic: DroneSchematic) => DroneBase) {
 
@@ -38,6 +42,7 @@ export const enemySchematics = [
     new EnemySchematic('Turret', (x, y, facing, s) => new EnemyTurret(x, y, facing, s)),
     new EnemySchematic('Hover Turret', (x, y, facing, s) => new EnemyHoverTurret(x, y, facing, s)),
     new EnemySchematic('Hover Puncher', (x, y, facing, s) => new EnemyHoverPunch(x, y, facing, s)),
+    new EnemySchematic('Spin Boomerang', (x, y, facing, s) => new EnemySpinBoomerang(x, y, facing, s)),
 ]
 
 export abstract class EntityBase {
@@ -108,7 +113,8 @@ export class Floor extends EntityBase {
         this.floorIndex = gameState.floors.indexOf(this)
 
         this.roomUpType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
-        this.roomRightType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
+        //this.roomRightType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
+        this.roomRightType = 0
         this.roomDownType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
         this.roomLeftType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
     }
@@ -187,8 +193,14 @@ export class Floor extends EntityBase {
         }
 
         this.collider = this.scene.physics.add.collider([gameState.playerGroup, gameState.droneGroup, gameState.enemyGroup, gameState.bulletGroup], this.fgLayer, other => {
+            gameState.bumpSound.play(get3dSound(other.body))
+
             const b = gameState.bullets.find(b => b.spawned && b.body === other.body)
             if (b) b.destroy()
+            const d = gameState.drones.find(d => d.spawned && d.body === other.body)
+            if (d) d.wallCollision()
+            const e = gameState.enemies.find(e => e.spawned && e.body === other.body)
+            if (e) e.wallCollision()
         })
     }
 
@@ -282,7 +294,7 @@ export abstract class UnitBase extends ActorBase {
     get isHurting() { return this.hurtTime > 0 }
 
     abstract get invulnPeriod(): number
-    abstract get hovering(): boolean
+    abstract get movementType(): 'stationary' | 'hovering' | 'spinning'
 
     constructor(x: number, y: number, public power: number, public maxPower: number = power) {
         super(x, y)
@@ -309,7 +321,7 @@ export abstract class UnitBase extends ActorBase {
     postUpdate() {
         super.postUpdate()
         if (!this.active) return
-        this.shadowSprite.setPosition(this.sprite.x, this.sprite.y + (this.hovering ? 6 : -2))
+        this.shadowSprite.setPosition(this.sprite.x, this.sprite.y + (this.movementType === 'stationary' ? -2 : 6))
         this.shadowSprite.setDepth(this.sprite.depth - 1)
         if (this.power <= 0 && !this.dead) this.die()
     }
@@ -322,6 +334,8 @@ export abstract class UnitBase extends ActorBase {
             const dir = new Phaser.Math.Vector2(this.sprite.x - inflictor.sprite.x, this.sprite.y - inflictor.sprite.y).normalize()
             this.hurtDirX = dir.x
             this.hurtDirY = dir.y
+
+            gameState.damageSound.play(get3dSound(this))
         }
     }
 
@@ -337,7 +351,7 @@ export class Player extends UnitBase {
     schematicIndex: number = 0
 
     get spriteKey() { return 'player' }
-    get hovering() { return true }
+    get movementType() { return 'hovering' as const }
     get invulnPeriod() { return 1 }
 
     constructor() {
@@ -448,7 +462,7 @@ export abstract class DroneLikeBase extends UnitBase {
 
     initialize() {
         super.initialize()
-        if (this.hovering) {
+        if (this.movementType === 'hovering') {
             this.scene.anims.create({ key: `drone-up-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
             this.scene.anims.create({ key: `drone-right-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 4, end: 7 }), frameRate: 5, repeat: -1 })
             this.scene.anims.create({ key: `drone-down-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 8, end: 11 }), frameRate: 5, repeat: -1 })
@@ -458,6 +472,16 @@ export abstract class DroneLikeBase extends UnitBase {
             this.scene.anims.create({ key: `drone-right-${this.attachSpriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.attachSpriteKey, { start: 4, end: 7 }), frameRate: 5, repeat: -1 })
             this.scene.anims.create({ key: `drone-down-${this.attachSpriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.attachSpriteKey, { start: 8, end: 11 }), frameRate: 5, repeat: -1 })
             this.scene.anims.create({ key: `drone-left-${this.attachSpriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.attachSpriteKey, { start: 12, end: 15 }), frameRate: 5, repeat: -1 })
+        } else if (this.movementType === 'spinning') {
+            this.scene.anims.create({ key: `drone-up-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+            this.scene.anims.create({ key: `drone-right-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+            this.scene.anims.create({ key: `drone-down-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+            this.scene.anims.create({ key: `drone-left-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+
+            this.scene.anims.create({ key: `drone-up-${this.attachSpriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.attachSpriteKey, { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+            this.scene.anims.create({ key: `drone-right-${this.attachSpriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.attachSpriteKey, { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+            this.scene.anims.create({ key: `drone-down-${this.attachSpriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.attachSpriteKey, { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+            this.scene.anims.create({ key: `drone-left-${this.attachSpriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.attachSpriteKey, { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
         } else {
             this.scene.anims.create({ key: `drone-up-${this.attachSpriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.attachSpriteKey, { start: 0, end: 0 }), frameRate: 5, repeat: -1 })
             this.scene.anims.create({ key: `drone-right-${this.attachSpriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.attachSpriteKey, { start: 1, end: 1 }), frameRate: 5, repeat: -1 })
@@ -492,7 +516,7 @@ export abstract class DroneLikeBase extends UnitBase {
     postUpdate() {
         super.postUpdate()
         if (!this.active) return
-        if (this.hovering) this.sprite.anims.play(`drone-${this.facing}-${this.spriteKey}`, true)
+        if (this.movementType !== 'stationary') this.sprite.anims.play(`drone-${this.facing}-${this.spriteKey}`, true)
         this.attachSprite.setPosition(this.sprite.x, this.sprite.y)
         this.attachSprite.anims.play(`drone-${this.facing}-${this.attachSpriteKey}`, true)
         this.attachSprite.setDepth(this.sprite.depth + 0.1)
@@ -502,6 +526,10 @@ export abstract class DroneLikeBase extends UnitBase {
 
     tick() {
         this.sprite.setPosition(Math.round(this.tileX) * 32 - 16, Math.round(this.tileY) * 32 - 16)
+    }
+
+    wallCollision() {
+
     }
 }
 
@@ -536,7 +564,7 @@ export abstract class DroneBase extends DroneLikeBase {
 
 export class DroneTurret extends DroneBase {
     get attachSpriteKey() { return 'drone-gun' }
-    get hovering() { return false }
+    get movementType() { return 'stationary' as const }
 
     tick() {
         super.tick()
@@ -552,7 +580,11 @@ export class DroneTurret extends DroneBase {
 export abstract class EnemyBase extends DroneLikeBase {
     collider!: Phaser.Physics.Arcade.Collider
 
-    get spriteKey() { return this.hovering ? 'enemy-core-hover' : 'enemy-core' }
+    get spriteKey() {
+        return this.movementType === 'hovering' ? 'enemy-core-hover' :
+            this.movementType === 'spinning' ? 'enemy-core-spin' :
+                'enemy-core'
+    }
     get invulnPeriod() { return 0 }
 
     constructor(x: number, y: number, facing: Facing4Way, power: number, public impactDamage: number, public schematic: EnemySchematic) {
@@ -593,7 +625,7 @@ export abstract class EnemyBase extends DroneLikeBase {
 
 export class EnemyTurret extends EnemyBase {
     subtick: number = 0
-    get hovering() { return false }
+    get movementType() { return 'stationary' as const }
     get attachSpriteKey() { return 'enemy-gun' }
 
     constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
@@ -618,7 +650,7 @@ export class EnemyTurret extends EnemyBase {
 
 export class EnemyHoverTurret extends EnemyBase {
     subtick: number = 0
-    get hovering() { return true }
+    get movementType() { return 'hovering' as const }
     get attachSpriteKey() { return 'enemy-gun-hover' }
 
     constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
@@ -645,7 +677,7 @@ export class EnemyHoverTurret extends EnemyBase {
 
 export class EnemyHoverPunch extends EnemyBase {
     subtick: number = 0
-    get hovering() { return true }
+    get movementType() { return 'hovering' as const }
     get attachSpriteKey() { return 'enemy-punch-hover' }
 
     constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
@@ -666,6 +698,46 @@ export class EnemyHoverPunch extends EnemyBase {
         dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
         this.body.setVelocity(dx * speed, dy * speed)
         this.subtick = (this.subtick + 1) % 2
+    }
+}
+
+export class EnemySpinBoomerang extends EnemyBase {
+
+    get movementType() { return 'spinning' as const }
+    get attachSpriteKey() { return 'enemy-boomerang-spin' }
+
+    constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
+        super(x, y, facing, 10, 10, schematic)
+    }
+
+    tick() {
+        super.tick()
+        const speed = 64
+        const dx = this.facing === 'up' || this.facing === 'right' ? 1 : -1
+        const dy = this.facing === 'up' || this.facing === 'left' ? 1 : -1
+        this.body.setVelocity(dx * speed, dy * speed)
+    }
+
+    wallCollision() {
+        super.wallCollision()
+        switch (this.facing) {
+            case 'up':
+                if (this.body.touching.up) this.facing = 'right'
+                if (this.body.touching.right) this.facing = 'left'
+                break
+            case 'right':
+                if (this.body.touching.right) this.facing = 'down'
+                if (this.body.touching.down) this.facing = 'up'
+                break
+            case 'down':
+                if (this.body.touching.down) this.facing = 'left'
+                if (this.body.touching.left) this.facing = 'right'
+                break
+            case 'left':
+                if (this.body.touching.left) this.facing = 'up'
+                if (this.body.touching.up) this.facing = 'down'
+                break
+        }
     }
 }
 
@@ -718,6 +790,7 @@ export class DropPower extends DropBase {
         if (gameState.player.power < gameState.player.maxPower) {
             const delta = Math.min(gameState.player.maxPower - gameState.player.power, this.power)
             gameState.player.power += delta
+            gameState.powerUpSound.play(get3dSound(this))
             return true
         }
     }
@@ -790,6 +863,9 @@ export class BulletPulse extends BulletBase {
 
     initialize() {
         super.initialize()
+
+        gameState.shootSound.play(get3dSound(this))
+
         this.scene.anims.create({ key: `bullet-up-left-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 0, end: 0 }), frameRate: 5, repeat: -1 })
         this.scene.anims.create({ key: `bullet-up-center-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 1, end: 1 }), frameRate: 5, repeat: -1 })
         this.scene.anims.create({ key: `bullet-up-right-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 2, end: 2 }), frameRate: 5, repeat: -1 })
@@ -834,6 +910,7 @@ export class InteractablePowerCore extends InteractableBase {
         if (gameState.player.power < gameState.player.maxPower) {
             const delta = Math.min(gameState.player.maxPower - gameState.player.power, this.power)
             gameState.player.power += delta
+            gameState.powerUpSound.play(get3dSound(this))
             this.destroy()
         }
     }
@@ -846,6 +923,7 @@ export class GameState {
         new EnemyTurret(256, 64, 'down', enemySchematics[0]),
         new EnemyHoverTurret(240, -32, 'right', enemySchematics[1]),
         new EnemyHoverPunch(272, 32, 'left', enemySchematics[2]),
+        new EnemySpinBoomerang(64, 48, 'right', enemySchematics[3]),
     ]
     drops: DropBase[] = []
     bullets: BulletBase[] = []
@@ -860,6 +938,12 @@ export class GameState {
     enemyGroup!: Phaser.GameObjects.Group
     dropGroup!: Phaser.GameObjects.Group
     bulletGroup!: Phaser.GameObjects.Group
+
+    music!: Phaser.Sound.BaseSound
+    bumpSound!: Phaser.Sound.BaseSound
+    damageSound!: Phaser.Sound.BaseSound
+    shootSound!: Phaser.Sound.BaseSound
+    powerUpSound!: Phaser.Sound.BaseSound
 
     get floor() { return this.floors[this.floorIndex] }
 
@@ -888,14 +972,21 @@ export class GameplayScene extends Phaser.Scene {
         this.load.spritesheet('enemy-core', 'assets/Enemy-Core-Stationary.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-gun', 'assets/Enemy-Gun-Stationary.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-core-hover', 'assets/Enemy-Core-Hovering.png', { frameWidth: 32 })
+        this.load.spritesheet('enemy-core-spin', 'assets/Enemy-Core-Spinning.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-gun-hover', 'assets/Enemy-Gun-Hovering.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-punch-hover', 'assets/Enemy-Punch-Hovering.png', { frameWidth: 32 })
+        this.load.spritesheet('enemy-boomerang-spin', 'assets/Enemy-Boomerang.png', { frameWidth: 32 })
         this.load.spritesheet('power-bar', 'assets/Power-Bar.png', { frameWidth: 32 })
         this.load.spritesheet('drop-shadow', 'assets/DropShadow.png', { frameWidth: 32 })
         this.load.spritesheet('pickup-energy', 'assets/Pickup-Energy.png', { frameWidth: 8 })
         this.load.image('destructible-power-core', 'assets/Destructable-Powercore.png')
         this.load.spritesheet('projectile-ally', 'assets/Projectile-Ally.png', { frameWidth: 32 })
         this.load.spritesheet('projectile-enemy', 'assets/Projectile-Enemy.png', { frameWidth: 32 })
+        this.load.audio('music', 'assets/dire-space-emergency.mp3')
+        this.load.audio('sound-bump', 'assets/bump.wav')
+        this.load.audio('sound-damage', 'assets/damage.wav')
+        this.load.audio('sound-shoot', 'assets/laserShoot.wav')
+        this.load.audio('sound-power-up', 'assets/powerUp.wav')
     }
 
     create() {
@@ -907,6 +998,11 @@ export class GameplayScene extends Phaser.Scene {
         this.text = this.add.text(0, 0, '', { color: 'white', backgroundColor: 'dimgray' })
         this.text.setDepth(9999)
         this.text.setScrollFactor(0, 0)
+        gameState.music = this.sound.add('music')
+        gameState.bumpSound = this.sound.add('sound-bump')
+        gameState.damageSound = this.sound.add('sound-damage')
+        gameState.shootSound = this.sound.add('sound-shoot')
+        gameState.powerUpSound = this.sound.add('sound-power-up')
     }
 
     update(t: number, dt: number) {
@@ -919,6 +1015,11 @@ export class GameplayScene extends Phaser.Scene {
             if (i === gameState.player.schematicIndex) str = `(${str})`
             return str
         }).join(' ')}\n${gameState.player.mapX}, ${gameState.player.mapY}`)
+
+        const tick = Math.floor(t / gameState.tickRate) * gameState.tickRate
+        if (t / gameState.tickRate >= tick && t - dt <= tick) {
+            if (!gameState.music.isPlaying) gameState.music.play()
+        }
     }
 }
 
