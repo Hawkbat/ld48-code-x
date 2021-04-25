@@ -802,7 +802,7 @@ export class DroneGun extends DroneBase {
         super.tick()
         const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
         const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
-        gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, true, 5))
+        gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 8, this.y + dy * 8, dx, dy, 512, 2, true, 5))
     }
 }
 
@@ -828,7 +828,7 @@ export class DroneTracker extends DroneBase {
         dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
         dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
         if (this.subtick === 1) {
-            gameState.bullets.push(new BulletTracker(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx, dy, true, 15))
+            gameState.bullets.push(new BulletTracker(this.floorIndex, this.x + dx * 8, this.y + dy * 8, dx, dy, true, 15))
         }
         this.subtick = (this.subtick + 1) % 2
     }
@@ -940,7 +940,7 @@ export class DroneDirectionalGun extends DroneBase {
 
         const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
         const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
-        gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, true, 5))
+        gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 8, this.y + dy * 8, dx, dy, 512, 2, true, 5))
     }
 
     wallCollision() {
@@ -1047,7 +1047,7 @@ export class EnemyGun extends EnemyBase {
         } else if (this.subtick === 1) {
             const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
             const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
-            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 8, this.y + dy * 8, dx, dy, 512, 2, false, 5))
         }
         this.subtick = (this.subtick + 1) % 2
     }
@@ -1076,9 +1076,9 @@ export class EnemyMultishot extends EnemyBase {
             const ox = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
             const oy = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
 
-            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx + ox, dy + oy, 256, 2, false, 5))
-            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx, dy, 256, 2, false, 5))
-            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx - ox, dy - oy, 256, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 8, this.y + dy * 8, dx + ox, dy + oy, 256, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 8, this.y + dy * 8, dx, dy, 256, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 8, this.y + dy * 8, dx - ox, dy - oy, 256, 2, false, 5))
         }
         this.subtick = (this.subtick + 1) % 2
     }
@@ -1105,7 +1105,7 @@ export class EnemyHoverGun extends EnemyBase {
         } else if (this.subtick === 1) {
             const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
             const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
-            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 8, this.y + dy * 8, dx, dy, 512, 2, false, 5))
         }
         this.subtick = (this.subtick + 1) % 2
     }
@@ -1136,9 +1136,9 @@ export class EnemyHoverMultishot extends EnemyBase {
             const ox = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
             const oy = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
 
-            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx + ox, dy + oy, 256, 2, false, 5))
-            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx, dy, 256, 2, false, 5))
-            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx - ox, dy - oy, 256, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 8, this.y + dy * 8, dx + ox, dy + oy, 256, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 8, this.y + dy * 8, dx, dy, 256, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 8, this.y + dy * 8, dx - ox, dy - oy, 256, 2, false, 5))
         }
         this.subtick = (this.subtick + 1) % 2
     }
@@ -1239,7 +1239,7 @@ export class EnemyDirectionalGun extends EnemyBase {
 
         const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
         const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
-        gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, false, 5))
+        gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 8, this.y + dy * 8, dx, dy, 512, 2, false, 5))
     }
 
     wallCollision() {
