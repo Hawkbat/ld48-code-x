@@ -39,7 +39,12 @@ function dist(a: { x: number, y: number }, b: { x: number, y: number }) {
 }
 
 function get3dSound(ent: { x: number, y: number }) {
-    return { pan: Math.min(1, Math.max(-1, (ent.x - gameState.player.x) / 640)), volume: 1 - Math.min(1, Math.max(dist(ent, gameState.player) / 320)) }
+    return { pan: Math.min(1, Math.max(-1, (ent.x - gameState.player.x) / 320)), volume: 1 - Math.min(1, Math.max(dist(ent, gameState.player) / 320)) }
+}
+
+function destroyComponent<T extends { destroy(): void }>(c: T): T {
+    c?.destroy()
+    return null as any as T
 }
 
 export class DroneSchematic {
@@ -49,27 +54,27 @@ export class DroneSchematic {
 }
 
 export const droneSchematics = [
-    new DroneSchematic('Turret', 10, (p, s) => new DroneGun(p.x, p.y, p.facing, s)),
-    new DroneSchematic('Puncher', 15, (p, s) => new DroneHoverPunch(p.x, p.y, p.facing, s)),
-    new DroneSchematic('Boomerang', 15, (p, s) => new DroneSpinBoomerang(p.x, p.y, p.facing, s)),
-    new DroneSchematic('Tracker', 15, (p, s) => new DroneTracker(p.x, p.y, p.facing, s)),
+    new DroneSchematic('Turret', 10, (p, s) => new DroneGun(p.floorIndex, p.x, p.y, p.facing, s)),
+    new DroneSchematic('Puncher', 15, (p, s) => new DroneHoverPunch(p.floorIndex, p.x, p.y, p.facing, s)),
+    new DroneSchematic('Boomerang', 15, (p, s) => new DroneSpinBoomerang(p.floorIndex, p.x, p.y, p.facing, s)),
+    new DroneSchematic('Tracker', 15, (p, s) => new DroneTracker(p.floorIndex, p.x, p.y, p.facing, s)),
 ]
 
 export class EnemySchematic {
 
-    constructor(public name: string, public cost: number, public create: (x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) => EnemyBase) {
+    constructor(public name: string, public cost: number, public create: (floorIndex: number, x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) => EnemyBase) {
 
     }
 }
 
 export const enemySchematics = [
-    new EnemySchematic('Turret', 10, (x, y, facing, s) => new EnemyGun(x, y, facing, s)),
-    new EnemySchematic('Hover Turret', 15, (x, y, facing, s) => new EnemyHoverGun(x, y, facing, s)),
-    new EnemySchematic('Spin Boomerang', 15, (x, y, facing, s) => new EnemySpinBoomerang(x, y, facing, s)),
-    new EnemySchematic('Directional Turret', 15, (x, y, facing, s) => new EnemyDirectionalTurret(x, y, facing, s)),
-    new EnemySchematic('Hover Puncher', 20, (x, y, facing, s) => new EnemyHoverPunch(x, y, facing, s)),
-    new EnemySchematic('Multishot Turret', 20, (x, y, facing, s) => new EnemyMultishot(x, y, facing, s)),
-    new EnemySchematic('Hover Multishot', 25, (x, y, facing, s) => new EnemyHoverMultishot(x, y, facing, s)),
+    new EnemySchematic('Turret', 10, (f, x, y, facing, s) => new EnemyGun(f, x, y, facing, s)),
+    new EnemySchematic('Hover Turret', 15, (f, x, y, facing, s) => new EnemyHoverGun(f, x, y, facing, s)),
+    new EnemySchematic('Spin Boomerang', 15, (f, x, y, facing, s) => new EnemySpinBoomerang(f, x, y, facing, s)),
+    new EnemySchematic('Directional Turret', 15, (f, x, y, facing, s) => new EnemyDirectionalTurret(f, x, y, facing, s)),
+    new EnemySchematic('Hover Puncher', 20, (f, x, y, facing, s) => new EnemyHoverPunch(f, x, y, facing, s)),
+    new EnemySchematic('Multishot Turret', 20, (f, x, y, facing, s) => new EnemyMultishot(f, x, y, facing, s)),
+    new EnemySchematic('Hover Multishot', 25, (f, x, y, facing, s) => new EnemyHoverMultishot(f, x, y, facing, s)),
 ]
 
 export abstract class EntityBase {
@@ -77,7 +82,10 @@ export abstract class EntityBase {
     initialized: boolean = false
     spawned: boolean = false
     scene!: Phaser.Scene
-    floorIndex: number = 0
+
+    constructor(public floorIndex: number) {
+
+    }
 
     get floor() { return gameState.floors[this.floorIndex] }
 
@@ -145,9 +153,12 @@ export class Floor extends EntityBase {
     get isTopFloor() { return this.floorNumber === 0 }
     get isBossFloor() { return this.floorNumber === 4 }
 
+    constructor(floorIndex: number) {
+        super(floorIndex)
+    }
+
     initialize() {
         super.initialize()
-        this.floorIndex = gameState.floors.indexOf(this)
 
         this.roomUpCenterType = this.randomRoomType()
         this.roomCenterRightType = this.randomRoomType()
@@ -188,9 +199,9 @@ export class Floor extends EntityBase {
 
         // Boss rooms
         if (this.isBossFloor) {
-
+            this.copyRect(0, 92, 4, 0, 16, 32)
         } else {
-            this.clearRect(0, 0, 24, 24)
+            this.clearRect(0, 0, 24, 32)
         }
 
         this.setRoom(52, this.roomUpLeftType, 0, 24, null, this.hasRoomUpCenter, this.hasRoomCenterLeft, null)
@@ -206,7 +217,15 @@ export class Floor extends EntityBase {
 
         this.setRoomDoors(8, 32, this.hasRoomUpCenter, this.hasRoomCenterRight, this.hasRoomDownCenter, this.hasRoomCenterLeft)
 
-        this.hasSpawnedObjects = true
+        if (!this.hasSpawnedObjects) {
+            gameState.interactibles.push(new InteractableElevatorButton(this.floorIndex, -64, -80, 1, true))
+            gameState.interactibles.push(new InteractableElevatorButton(this.floorIndex, 64, -80, -1, true))
+            if (this.isBossFloor) {
+                gameState.interactibles.push(new InteractableElevatorButton(this.floorIndex, -64, -1104, 1, false))
+            }
+            this.hasSpawnedObjects = true
+        }
+
 
         if (DEBUG) {
             this.debugGrid = this.scene.add.grid(0, 0, 1024, 1024, 32, 32, undefined, undefined, 0xFF00FF, 0.25)
@@ -228,13 +247,13 @@ export class Floor extends EntityBase {
 
     despawn() {
         super.despawn()
-        if (this.map) this.map.destroy()
-        if (this.bgLayer) this.bgLayer.destroy()
-        if (this.fgLayer) this.fgLayer.destroy()
-        if (this.debugGrid) this.debugGrid.destroy()
-        if (this.debugGfx) this.debugGfx.destroy()
-        if (this.debugLayer) this.debugLayer.destroy()
-        if (this.collider) this.collider.destroy()
+        this.map = destroyComponent(this.map)
+        this.bgLayer = destroyComponent(this.bgLayer)
+        this.fgLayer = destroyComponent(this.fgLayer)
+        this.debugGrid = destroyComponent(this.debugGrid)
+        this.debugGfx = destroyComponent(this.debugGfx)
+        this.debugLayer = destroyComponent(this.debugLayer)
+        this.collider = destroyComponent(this.collider)
     }
 
     update(t: number, dt: number) {
@@ -251,11 +270,11 @@ export class Floor extends EntityBase {
             const schematic = randItem(enemySchematics.filter(s => s.cost <= enemyBudget))
             if (!schematic) break
             enemyBudget -= schematic.cost
-            gameState.enemies.push(schematic.create(x, y, randItem(FACING_4WAY)!, schematic))
+            gameState.enemies.push(schematic.create(this.floorIndex, x, y, randItem(FACING_4WAY)!, schematic))
         }
         for (let i = 0; i < powerCores && tiles.length; i++) {
             const { x, y } = tiles.pop()!
-            gameState.interactibles.push(new InteractablePowerCore(x, y))
+            gameState.interactibles.push(new InteractablePowerCore(this.floorIndex, x, y))
         }
     }
 
@@ -335,15 +354,15 @@ export class Floor extends EntityBase {
     }
 
     private randomRoomType() {
-        return Math.random() > 0.25 ? rand(3) : -1
+        return !this.isBossFloor && Math.random() < (0.25 + 0.2 * this.floorNumber) ? rand(3) : -1
     }
 }
 
 export abstract class ActorBase extends EntityBase {
     sprite!: Phaser.GameObjects.Sprite
 
-    constructor(public x: number, public y: number) {
-        super()
+    constructor(floorIndex: number, public x: number, public y: number) {
+        super(floorIndex)
     }
 
     abstract get spriteKey(): string
@@ -357,7 +376,7 @@ export abstract class ActorBase extends EntityBase {
 
     despawn() {
         super.despawn()
-        if (this.sprite) this.sprite.destroy()
+        this.sprite = destroyComponent(this.sprite)
     }
 
     postUpdate() {
@@ -387,8 +406,8 @@ export abstract class UnitBase extends ActorBase {
     abstract get invulnPeriod(): number
     abstract get movementType(): 'stationary' | 'hovering' | 'spinning' | 'directional'
 
-    constructor(x: number, y: number, public power: number, public maxPower: number = power) {
-        super(x, y)
+    constructor(floorIndex: number, x: number, y: number, public power: number, public maxPower: number = power) {
+        super(floorIndex, x, y)
     }
 
     spawn(scene: Phaser.Scene) {
@@ -399,7 +418,7 @@ export abstract class UnitBase extends ActorBase {
 
     despawn() {
         super.despawn()
-        if (this.shadowSprite) this.shadowSprite.destroy()
+        this.shadowSprite = destroyComponent(this.shadowSprite)
     }
 
     update(t: number, dt: number) {
@@ -502,23 +521,18 @@ export class Player extends UnitBase {
         if (cursors.space.isDown && !this.placing) {
             this.placing = true
 
-            const d = gameState.drones.filter(d => dist(this.sprite, d) < 20).sort((a, b) => dist(this.sprite, a) - dist(this.sprite, b))[0]
+            const target = this.getTargetForInteract()
 
-            const i = gameState.interactibles.filter(i => dist(this.sprite, i) < 20).sort((a, b) => dist(this.sprite, a) - dist(this.sprite, b))[0]
-
-            if (d) {
-                const refund = Math.min(this.maxPower - this.power, d.power)
+            if (target instanceof DroneBase) {
+                const refund = Math.min(this.maxPower - this.power, target.power)
                 this.power += refund
-                d.destroy()
-            } else if (i) {
-                i.interact()
-            } else {
-                const s = this.schematics[this.schematicIndex]
-                if (s && this.power > s.cost && !gameState.drones.some(d => d.schematic === s)) {
-                    this.power -= s.cost
-                    const drone = s.create(this, s)
-                    gameState.drones.push(drone)
-                }
+                target.destroy()
+            } else if (target instanceof InteractableBase) {
+                target.interact()
+            } else if (target instanceof DroneSchematic) {
+                this.power -= target.cost
+                const drone = target.create(this, target)
+                gameState.drones.push(drone)
             }
         }
         if (!cursors.space.isDown && this.placing) this.placing = false
@@ -540,6 +554,17 @@ export class Player extends UnitBase {
         super.die()
         this.body.setVelocity(0, 0)
     }
+
+    getTargetForInteract() {
+        const d = gameState.drones.filter(d => d.active && d.floorIndex === this.floorIndex && dist(this.sprite, d) < 20).sort((a, b) => dist(this.sprite, a) - dist(this.sprite, b))[0]
+        if (d) return d
+
+        const i = gameState.interactibles.filter(i => i.active && i.floorIndex === this.floorIndex && dist(this.sprite, i) < 20).sort((a, b) => dist(this.sprite, a) - dist(this.sprite, b))[0]
+        if (i) return i
+
+        const s = this.schematics[this.schematicIndex]
+        if (s && this.power > s.cost && !gameState.drones.some(d => d.schematic === s)) return s
+    }
 }
 
 export abstract class DroneLikeBase extends UnitBase {
@@ -548,8 +573,8 @@ export abstract class DroneLikeBase extends UnitBase {
 
     abstract get attachSpriteKey(): string
 
-    constructor(x: number, y: number, facing: Facing4Way, power: number, public impactDamage: number) {
-        super(x, y, power)
+    constructor(floorIndex: number, x: number, y: number, facing: Facing4Way, power: number, public impactDamage: number) {
+        super(floorIndex, x, y, power)
         this.facing = facing
     }
 
@@ -593,8 +618,8 @@ export abstract class DroneLikeBase extends UnitBase {
 
     despawn() {
         super.despawn()
-        if (this.attachSprite) this.attachSprite.destroy()
-        if (this.barSprite) this.barSprite.destroy()
+        this.attachSprite = destroyComponent(this.attachSprite)
+        this.barSprite = destroyComponent(this.barSprite)
     }
 
     update(t: number, dt: number) {
@@ -642,8 +667,8 @@ export abstract class DroneBase extends DroneLikeBase {
     }
     get invulnPeriod() { return 1 }
 
-    constructor(x: number, y: number, facing: Facing4Way, impactDamage: number, public schematic: DroneSchematic) {
-        super(x, y, facing, schematic.cost, impactDamage)
+    constructor(floorIndex: number, x: number, y: number, facing: Facing4Way, impactDamage: number, public schematic: DroneSchematic) {
+        super(floorIndex, x, y, facing, schematic.cost, impactDamage)
     }
 
     spawn(scene: Phaser.Scene) {
@@ -660,7 +685,7 @@ export abstract class DroneBase extends DroneLikeBase {
     despawn() {
         super.despawn()
         gameState.droneGroup.remove(this.sprite)
-        if (this.collider) this.collider.destroy()
+        this.collider = destroyComponent(this.collider)
     }
 
     destroy() {
@@ -678,15 +703,15 @@ export class DroneGun extends DroneBase {
     get attachSpriteKey() { return 'drone-gun' }
     get movementType() { return 'stationary' as const }
 
-    constructor(x: number, y: number, facing: Facing4Way, schematic: DroneSchematic) {
-        super(x, y, facing, 0, schematic)
+    constructor(floorIndex: number, x: number, y: number, facing: Facing4Way, schematic: DroneSchematic) {
+        super(floorIndex, x, y, facing, 0, schematic)
     }
 
     tick() {
         super.tick()
         const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
         const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
-        gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, true, 5))
+        gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, true, 5))
     }
 }
 
@@ -696,8 +721,8 @@ export class DroneTracker extends DroneBase {
     get attachSpriteKey() { return 'drone-tracking' }
     get movementType() { return 'stationary' as const }
 
-    constructor(x: number, y: number, facing: Facing4Way, schematic: DroneSchematic) {
-        super(x, y, facing, 0, schematic)
+    constructor(floorIndex: number, x: number, y: number, facing: Facing4Way, schematic: DroneSchematic) {
+        super(floorIndex, x, y, facing, 0, schematic)
     }
 
     tick() {
@@ -712,7 +737,7 @@ export class DroneTracker extends DroneBase {
         dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
         dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
         if (this.subtick === 1) {
-            gameState.bullets.push(new BulletTracker(this.x + dx * 16, this.y + dy * 16, dx, dy, true, 15))
+            gameState.bullets.push(new BulletTracker(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx, dy, true, 15))
         }
         this.subtick = (this.subtick + 1) % 2
     }
@@ -724,8 +749,8 @@ export class DroneHoverPunch extends DroneBase {
     get movementType() { return 'hovering' as const }
     get attachSpriteKey() { return 'drone-punch-hover' }
 
-    constructor(x: number, y: number, facing: Facing4Way, schematic: DroneSchematic) {
-        super(x, y, facing, 10, schematic)
+    constructor(floorIndex: number, x: number, y: number, facing: Facing4Way, schematic: DroneSchematic) {
+        super(floorIndex, x, y, facing, 10, schematic)
     }
 
     tick() {
@@ -761,8 +786,8 @@ export class DroneSpinBoomerang extends DroneBase {
     get movementType() { return 'spinning' as const }
     get attachSpriteKey() { return 'drone-boomerang-spin' }
 
-    constructor(x: number, y: number, facing: Facing4Way, schematic: DroneSchematic) {
-        super(x, y, facing, 15, schematic)
+    constructor(floorIndex: number, x: number, y: number, facing: Facing4Way, schematic: DroneSchematic) {
+        super(floorIndex, x, y, facing, 15, schematic)
     }
 
     tick() {
@@ -812,8 +837,8 @@ export abstract class EnemyBase extends DroneLikeBase {
     }
     get invulnPeriod() { return 0.25 }
 
-    constructor(x: number, y: number, facing: Facing4Way, power: number, impactDamage: number, public schematic: EnemySchematic) {
-        super(x, y, facing, power, impactDamage)
+    constructor(floorIndex: number, x: number, y: number, facing: Facing4Way, power: number, impactDamage: number, public schematic: EnemySchematic) {
+        super(floorIndex, x, y, facing, power, impactDamage)
     }
 
     spawn(scene: Phaser.Scene) {
@@ -828,7 +853,7 @@ export abstract class EnemyBase extends DroneLikeBase {
     despawn() {
         super.despawn()
         gameState.enemyGroup.remove(this.sprite)
-        if (this.collider) this.collider.destroy()
+        this.collider = destroyComponent(this.collider)
     }
 
     destroy() {
@@ -840,9 +865,9 @@ export abstract class EnemyBase extends DroneLikeBase {
         super.die()
         if (Math.random() < 0.1) {
             const choices = droneSchematics.filter(s => !gameState.player.schematics.includes(s))
-            if (choices.length) gameState.drops.push(new DropSchematic(this.x, this.y, randItem(choices)!))
+            if (choices.length) gameState.drops.push(new DropSchematic(this.floorIndex, this.x, this.y, randItem(choices)!))
         } else {
-            gameState.drops.push(new DropPower(this.x, this.y, 10))
+            gameState.drops.push(new DropPower(this.floorIndex, this.x, this.y, 10))
         }
         this.destroy()
     }
@@ -853,8 +878,8 @@ export class EnemyGun extends EnemyBase {
     get movementType() { return 'stationary' as const }
     get attachSpriteKey() { return 'enemy-gun' }
 
-    constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
-        super(x, y, facing, 15, 5, schematic)
+    constructor(floorIndex: number, x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
+        super(floorIndex, x, y, facing, 15, 5, schematic)
     }
 
     tick() {
@@ -867,7 +892,7 @@ export class EnemyGun extends EnemyBase {
         } else if (this.subtick === 1) {
             const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
             const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
-            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, false, 5))
         }
         this.subtick = (this.subtick + 1) % 2
     }
@@ -878,8 +903,8 @@ export class EnemyMultishot extends EnemyBase {
     get movementType() { return 'stationary' as const }
     get attachSpriteKey() { return 'enemy-multishot' }
 
-    constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
-        super(x, y, facing, 20, 5, schematic)
+    constructor(floorIndex: number, x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
+        super(floorIndex, x, y, facing, 20, 5, schematic)
     }
 
     tick() {
@@ -896,9 +921,9 @@ export class EnemyMultishot extends EnemyBase {
             const ox = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
             const oy = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
 
-            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx + ox, dy + oy, 256, 2, false, 5))
-            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 256, 2, false, 5))
-            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx - ox, dy - oy, 256, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx + ox, dy + oy, 256, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx, dy, 256, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx - ox, dy - oy, 256, 2, false, 5))
         }
         this.subtick = (this.subtick + 1) % 2
     }
@@ -909,8 +934,8 @@ export class EnemyHoverGun extends EnemyBase {
     get movementType() { return 'hovering' as const }
     get attachSpriteKey() { return 'enemy-gun-hover' }
 
-    constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
-        super(x, y, facing, 20, 5, schematic)
+    constructor(floorIndex: number, x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
+        super(floorIndex, x, y, facing, 20, 5, schematic)
     }
 
     tick() {
@@ -925,7 +950,7 @@ export class EnemyHoverGun extends EnemyBase {
         } else if (this.subtick === 1) {
             const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
             const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
-            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, false, 5))
         }
         this.subtick = (this.subtick + 1) % 2
     }
@@ -936,8 +961,8 @@ export class EnemyHoverMultishot extends EnemyBase {
     get movementType() { return 'hovering' as const }
     get attachSpriteKey() { return 'enemy-multishot-hover' }
 
-    constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
-        super(x, y, facing, 25, 5, schematic)
+    constructor(floorIndex: number, x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
+        super(floorIndex, x, y, facing, 25, 5, schematic)
     }
 
     tick() {
@@ -956,9 +981,9 @@ export class EnemyHoverMultishot extends EnemyBase {
             const ox = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
             const oy = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
 
-            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx + ox, dy + oy, 256, 2, false, 5))
-            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 256, 2, false, 5))
-            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx - ox, dy - oy, 256, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx + ox, dy + oy, 256, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx, dy, 256, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx - ox, dy - oy, 256, 2, false, 5))
         }
         this.subtick = (this.subtick + 1) % 2
     }
@@ -969,8 +994,8 @@ export class EnemyHoverPunch extends EnemyBase {
     get movementType() { return 'hovering' as const }
     get attachSpriteKey() { return 'enemy-punch-hover' }
 
-    constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
-        super(x, y, facing, 20, 10, schematic)
+    constructor(floorIndex: number, x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
+        super(floorIndex, x, y, facing, 20, 10, schematic)
     }
 
     tick() {
@@ -996,8 +1021,8 @@ export class EnemySpinBoomerang extends EnemyBase {
     get movementType() { return 'spinning' as const }
     get attachSpriteKey() { return 'enemy-boomerang-spin' }
 
-    constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
-        super(x, y, facing, 20, 10, schematic)
+    constructor(floorIndex: number, x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
+        super(floorIndex, x, y, facing, 20, 10, schematic)
     }
 
     tick() {
@@ -1043,8 +1068,8 @@ export class EnemyDirectionalTurret extends EnemyBase {
     get movementType() { return 'directional' as const }
     get attachSpriteKey() { return 'enemy-gun-hover' }
 
-    constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
-        super(x, y, facing, 10, 5, schematic)
+    constructor(floorIndex: number, x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
+        super(floorIndex, x, y, facing, 10, 5, schematic)
         this.moveFacing =
             facing === 'up' ? 'right' :
                 facing === 'right' ? 'down' :
@@ -1059,7 +1084,7 @@ export class EnemyDirectionalTurret extends EnemyBase {
 
         const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
         const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
-        gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, false, 5))
+        gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, false, 5))
     }
 
     wallCollision() {
@@ -1098,7 +1123,7 @@ export abstract class DropBase extends ActorBase {
     despawn() {
         super.despawn()
         gameState.dropGroup.remove(this.sprite)
-        if (this.collider) this.collider.destroy()
+        this.collider = destroyComponent(this.collider)
     }
 
     destroy() {
@@ -1111,8 +1136,8 @@ export abstract class DropBase extends ActorBase {
 
 export class DropPower extends DropBase {
 
-    constructor(x: number, y: number, public power: number) {
-        super(x, y)
+    constructor(floorIndex: number, x: number, y: number, public power: number) {
+        super(floorIndex, x, y)
     }
 
     get spriteKey() { return 'pickup-energy' }
@@ -1140,8 +1165,8 @@ export class DropPower extends DropBase {
 
 export class DropSchematic extends DropBase {
 
-    constructor(x: number, y: number, public schematic: DroneSchematic) {
-        super(x, y)
+    constructor(floorIndex: number, x: number, y: number, public schematic: DroneSchematic) {
+        super(floorIndex, x, y)
     }
 
     get spriteKey() { return 'placeholder' }
@@ -1158,8 +1183,8 @@ export class DropSchematic extends DropBase {
 export abstract class BulletBase extends ActorBase {
     collider!: Phaser.Physics.Arcade.Collider
 
-    constructor(x: number, y: number, public dx: number, public dy: number, public speed: number, public lifetime: number, public friendly: boolean) {
-        super(x, y)
+    constructor(floorIndex: number, x: number, y: number, public dx: number, public dy: number, public speed: number, public lifetime: number, public friendly: boolean) {
+        super(floorIndex, x, y)
     }
 
     initialize() {
@@ -1191,7 +1216,7 @@ export abstract class BulletBase extends ActorBase {
     despawn() {
         super.despawn()
         gameState.bulletGroup.remove(this.sprite)
-        if (this.collider) this.collider.destroy()
+        this.collider = destroyComponent(this.collider)
     }
 
     destroy() {
@@ -1222,8 +1247,8 @@ export class BulletPulse extends BulletBase {
 
     get spriteKey() { return this.friendly ? 'projectile-ally' : 'projectile-enemy' }
 
-    constructor(x: number, y: number, dx: number, dy: number, speed: number, lifetime: number, friendly: boolean, public damage: number) {
-        super(x, y, dx, dy, speed, lifetime, friendly)
+    constructor(floorIndex: number, x: number, y: number, dx: number, dy: number, speed: number, lifetime: number, friendly: boolean, public damage: number) {
+        super(floorIndex, x, y, dx, dy, speed, lifetime, friendly)
     }
 
     hit(target: Player | DroneBase | EnemyBase) {
@@ -1238,8 +1263,8 @@ export class BulletTracker extends BulletBase {
 
     get spriteKey() { return this.friendly ? 'projectile-ally-tracking' : 'projectile-enemy-tracking' }
 
-    constructor(x: number, y: number, dx: number, dy: number, friendly: boolean, public damage: number) {
-        super(x, y, dx, dy, 192, 5, friendly)
+    constructor(floorIndex: number, x: number, y: number, dx: number, dy: number, friendly: boolean, public damage: number) {
+        super(floorIndex, x, y, dx, dy, 192, 5, friendly)
     }
 
     update(t: number, dt: number) {
@@ -1262,6 +1287,8 @@ export class BulletTracker extends BulletBase {
 
 export abstract class InteractableBase extends ActorBase {
 
+    abstract get actionText(): string
+
     destroy() {
         super.destroy()
         gameState.interactibles.splice(gameState.interactibles.indexOf(this), 1)
@@ -1274,6 +1301,11 @@ export class InteractablePowerCore extends InteractableBase {
     power: number = 25
 
     get spriteKey() { return 'destructible-power-core' }
+    get actionText() {
+        return gameState.player.power < gameState.player.maxPower ?
+            `Cannot pick up power core (already at max power)` :
+            `Pick up power core (+${this.power} power)`
+    }
 
     interact() {
         if (gameState.player.power < gameState.player.maxPower) {
@@ -1285,6 +1317,40 @@ export class InteractablePowerCore extends InteractableBase {
     }
 }
 
+export class InteractableElevatorButton extends InteractableBase {
+
+    get spriteKey() { return 'placeholder' }
+    get actionText() {
+        return this.isValidOnFloor() ?
+            `Take elevator ${this.delta === 1 ? 'down' : 'up'}` :
+            `Cannot take elevator ${this.delta === 1 ? 'down' : 'up'}`
+    }
+
+    constructor(floorIndex: number, x: number, y: number, public delta: -1 | 1, public main: boolean) {
+        super(floorIndex, x, y)
+    }
+
+    interact() {
+        if (this.isValidOnFloor()) {
+            gameState.floorIndex += this.delta
+            if (gameState.floorIndex == gameState.floors.length) gameState.floors.push(new Floor(gameState.floorIndex))
+            gameState.player.floorIndex = gameState.floorIndex
+            gameState.player.sprite.setPosition(0, 0)
+        }
+    }
+
+    private isValidOnFloor(): boolean {
+        if (this.main) {
+            if (this.delta === -1) return !this.floor.isTopFloor
+            if (this.delta === 1) return !this.floor.isBossFloor
+        } else {
+            if (this.delta === -1) return false
+            if (this.delta === 1) return true
+        }
+        return false
+    }
+}
+
 export class GameState {
     player: Player = new Player()
     drones: DroneBase[] = []
@@ -1292,7 +1358,7 @@ export class GameState {
     drops: DropBase[] = []
     bullets: BulletBase[] = []
     interactibles: InteractableBase[] = []
-    floors: Floor[] = [new Floor()]
+    floors: Floor[] = [new Floor(0)]
     floorIndex: number = 0
 
     tickRate: number = 0.5
@@ -1322,7 +1388,7 @@ export class GameplayScene extends Phaser.Scene {
     constructor() { super('gameplay') }
 
     init() {
-
+        console.log(gameState)
     }
 
     preload() {
@@ -1384,16 +1450,32 @@ export class GameplayScene extends Phaser.Scene {
         for (const ent of gameState.entities.filter(e => e.floorIndex !== gameState.floorIndex && e.spawned)) ent.despawn()
         for (const ent of gameState.entities.filter(e => e.spawned && e.active)) ent.update(t / 1000, dt / 1000)
         for (const ent of gameState.entities.filter(e => e.spawned && e.active)) ent.postUpdate()
-        this.text.setText(`Power: ${gameState.player.power}/${gameState.player.maxPower} Schematics: ${gameState.player.schematics.map((s, i) => {
+
+        this.text.setText(`Power: ${gameState.player.power}/${gameState.player.maxPower}\nSchematics (shift): ${gameState.player.schematics.map((s, i) => {
             let str = s ? `${s.name}:${s.cost}` : `empty`
             if (i === gameState.player.schematicIndex) str = `(${str})`
             return str
-        }).join(' ')}\n${gameState.player.mapX}, ${gameState.player.mapY}`)
+        }).join(' ')}\n${this.getContextTargetText()}`.trim())
 
         const tick = Math.floor(t / gameState.tickRate) * gameState.tickRate
         if (t / gameState.tickRate >= tick && t - dt <= tick) {
             if (!gameState.music.isPlaying) gameState.music.play()
         }
+    }
+
+    private getContextTargetText() {
+        let str = ''
+        const target = gameState.player.getTargetForInteract()
+        if (target instanceof DroneBase) {
+            str = `Pick up ${target.schematic.name} (+${target.power} power)`
+        }
+        if (target instanceof InteractableBase) {
+            str = target.actionText
+        }
+        if (target instanceof DroneSchematic) {
+            str = `Place ${target.name} (-${target.cost} power)`
+        }
+        return str ? `(space) ${str}` : ''
     }
 }
 
