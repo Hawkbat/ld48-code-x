@@ -31,6 +31,7 @@ export const droneSchematics = [
     new DroneSchematic('Turret', 10, (p, s) => new DroneGun(p.x, p.y, p.facing, s)),
     new DroneSchematic('Puncher', 15, (p, s) => new DroneHoverPunch(p.x, p.y, p.facing, s)),
     new DroneSchematic('Boomerang', 15, (p, s) => new DroneSpinBoomerang(p.x, p.y, p.facing, s)),
+    new DroneSchematic('Tracker', 15, (p, s) => new DroneTracker(p.x, p.y, p.facing, s)),
 ]
 
 export class EnemySchematic {
@@ -596,12 +597,39 @@ export class DroneGun extends DroneBase {
 
     tick() {
         super.tick()
-        if (this.power > 0 && !this.dead) {
-            const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
-            const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
-            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, true, 5))
-            this.power--
+        const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
+        const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
+        gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, true, 5))
+        this.power--
+    }
+}
+
+export class DroneTracker extends DroneBase {
+    subtick: number = 0
+
+    get attachSpriteKey() { return 'drone-tracking' }
+    get movementType() { return 'stationary' as const }
+
+    constructor(x: number, y: number, facing: Facing4Way, schematic: DroneSchematic) {
+        super(x, y, facing, 0, schematic)
+    }
+
+    tick() {
+        super.tick()
+        let dx = gameState.player.sprite.x - this.sprite.x
+        let dy = gameState.player.sprite.y - this.sprite.y
+        if (Math.abs(dx) > Math.abs(dy))
+            this.facing = dx < 0 ? 'left' : 'right'
+        else
+            this.facing = dy < 0 ? 'up' : 'down'
+
+        dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
+        dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
+        if (this.subtick === 1) {
+            gameState.bullets.push(new BulletTracker(this.x + dx * 16, this.y + dy * 16, dx, dy, true, 15))
         }
+        this.subtick = (this.subtick + 1) % 2
+        this.power--
     }
 }
 
@@ -1046,8 +1074,23 @@ export class DropSchematic extends DropBase {
 export abstract class BulletBase extends ActorBase {
     collider!: Phaser.Physics.Arcade.Collider
 
-    constructor(x: number, y: number, public dx: number, public dy: number, public speed: number, public lifetime: number) {
+    constructor(x: number, y: number, public dx: number, public dy: number, public speed: number, public lifetime: number, public friendly: boolean) {
         super(x, y)
+    }
+
+    initialize() {
+        super.initialize()
+
+        gameState.shootSound.play(get3dSound(this))
+
+        this.scene.anims.create({ key: `bullet-up-left-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 0, end: 0 }), frameRate: 5, repeat: -1 })
+        this.scene.anims.create({ key: `bullet-up-center-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 1, end: 1 }), frameRate: 5, repeat: -1 })
+        this.scene.anims.create({ key: `bullet-up-right-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 2, end: 2 }), frameRate: 5, repeat: -1 })
+        this.scene.anims.create({ key: `bullet-center-right-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 3, end: 3 }), frameRate: 5, repeat: -1 })
+        this.scene.anims.create({ key: `bullet-down-right-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 4, end: 4 }), frameRate: 5, repeat: -1 })
+        this.scene.anims.create({ key: `bullet-down-center-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 5, end: 5 }), frameRate: 5, repeat: -1 })
+        this.scene.anims.create({ key: `bullet-down-left-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 6, end: 6 }), frameRate: 5, repeat: -1 })
+        this.scene.anims.create({ key: `bullet-center-left-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 7, end: 7 }), frameRate: 5, repeat: -1 })
     }
 
     spawn(scene: Phaser.Scene) {
@@ -1080,6 +1123,14 @@ export abstract class BulletBase extends ActorBase {
         if (this.lifetime <= 0) this.destroy()
     }
 
+    postUpdate() {
+        super.postUpdate()
+        if (!this.active) return
+        const f: Facing8Way = `${this.dy < -0.25 ? 'up' : this.dy > 0.25 ? 'down' : 'center'}-${this.dx < -0.25 ? 'left' : this.dx > 0.25 ? 'right' : 'center'}` as const
+        const key = `bullet-${f}-${this.spriteKey}`
+        this.sprite.anims.play(key, true)
+    }
+
     abstract hit(target: Player | DroneBase | EnemyBase): boolean | undefined
 }
 
@@ -1087,23 +1138,8 @@ export class BulletPulse extends BulletBase {
 
     get spriteKey() { return this.friendly ? 'projectile-ally' : 'projectile-enemy' }
 
-    constructor(x: number, y: number, dx: number, dy: number, speed: number, lifetime: number, public friendly: boolean, public damage: number) {
-        super(x, y, dx, dy, speed, lifetime)
-    }
-
-    initialize() {
-        super.initialize()
-
-        gameState.shootSound.play(get3dSound(this))
-
-        this.scene.anims.create({ key: `bullet-up-left-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 0, end: 0 }), frameRate: 5, repeat: -1 })
-        this.scene.anims.create({ key: `bullet-up-center-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 1, end: 1 }), frameRate: 5, repeat: -1 })
-        this.scene.anims.create({ key: `bullet-up-right-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 2, end: 2 }), frameRate: 5, repeat: -1 })
-        this.scene.anims.create({ key: `bullet-center-right-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 3, end: 3 }), frameRate: 5, repeat: -1 })
-        this.scene.anims.create({ key: `bullet-down-right-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 4, end: 4 }), frameRate: 5, repeat: -1 })
-        this.scene.anims.create({ key: `bullet-down-center-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 5, end: 5 }), frameRate: 5, repeat: -1 })
-        this.scene.anims.create({ key: `bullet-down-left-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 6, end: 6 }), frameRate: 5, repeat: -1 })
-        this.scene.anims.create({ key: `bullet-center-left-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 7, end: 7 }), frameRate: 5, repeat: -1 })
+    constructor(x: number, y: number, dx: number, dy: number, speed: number, lifetime: number, friendly: boolean, public damage: number) {
+        super(x, y, dx, dy, speed, lifetime, friendly)
     }
 
     hit(target: Player | DroneBase | EnemyBase) {
@@ -1111,13 +1147,32 @@ export class BulletPulse extends BulletBase {
         target.hurt(this.damage, this)
         return true
     }
+}
 
-    postUpdate() {
-        super.postUpdate()
+export class BulletTracker extends BulletBase {
+    trackingTime: number = 0.5
+
+    get spriteKey() { return this.friendly ? 'projectile-ally-tracking' : 'projectile-enemy-tracking' }
+
+    constructor(x: number, y: number, dx: number, dy: number, friendly: boolean, public damage: number) {
+        super(x, y, dx, dy, 192, 5, friendly)
+    }
+
+    update(t: number, dt: number) {
+        super.update(t, dt)
         if (!this.active) return
-        const f: Facing8Way = `${this.dy < 0 ? 'up' : this.dy > 0 ? 'down' : 'center'}-${this.dx < 0 ? 'left' : this.dx > 0 ? 'right' : 'center'}` as const
-        const key = `bullet-${f}-${this.spriteKey}`
-        this.sprite.anims.play(key, true)
+        this.trackingTime -= dt
+        if (this.trackingTime > 0) {
+            const dir = new Phaser.Math.Vector2(gameState.player.sprite.x - this.sprite.x, gameState.player.sprite.y - this.sprite.y).normalize()
+            this.dx = dir.x
+            this.dy = dir.y
+        }
+    }
+
+    hit(target: Player | DroneBase | EnemyBase) {
+        if (this.friendly === (target instanceof Player || target instanceof DroneBase)) return
+        target.hurt(this.damage, this)
+        return true
     }
 }
 
@@ -1205,6 +1260,7 @@ export class GameplayScene extends Phaser.Scene {
         this.load.spritesheet('drone-core-spin', 'assets/Drone-Core-Spinning.png', { frameWidth: 32 })
         this.load.spritesheet('drone-core-directional', 'assets/Drone-Core-Directional.png', { frameWidth: 32 })
         this.load.spritesheet('drone-gun', 'assets/Drone_Gun.png', { frameWidth: 32 })
+        this.load.spritesheet('drone-tracking', 'assets/Drone-Tracking-Stationary.png', { frameWidth: 32 })
         this.load.spritesheet('drone-punch-hover', 'assets/Drone-Punch-Hovering.png', { frameWidth: 32 })
         this.load.spritesheet('drone-boomerang-spin', 'assets/Drone-Boomerang.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-core', 'assets/Enemy-Core-Stationary.png', { frameWidth: 32 })
@@ -1223,6 +1279,7 @@ export class GameplayScene extends Phaser.Scene {
         this.load.image('destructible-power-core', 'assets/Destructable-Powercore.png')
         this.load.spritesheet('projectile-ally', 'assets/Projectile-Ally.png', { frameWidth: 32 })
         this.load.spritesheet('projectile-enemy', 'assets/Projectile-Enemy.png', { frameWidth: 32 })
+        this.load.spritesheet('projectile-ally-tracking', 'assets/Projectile-Ally-Tracking.png', { frameWidth: 32 })
         this.load.audio('music', 'assets/dire-space-emergency.mp3')
         this.load.audio('sound-bump', 'assets/bump.wav')
         this.load.audio('sound-damage', 'assets/damage.wav')
