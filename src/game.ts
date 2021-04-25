@@ -195,6 +195,9 @@ export class Floor extends EntityBase {
 
     hasSpawnedObjects: boolean = false
 
+    hasOpenedBossRoom: boolean = false
+    hasOpenedBossElevator: boolean = false
+
     roomUpLeftType: number = -1
     roomUpCenterType: number = -1
     roomUpRightType: number = -1
@@ -297,10 +300,10 @@ export class Floor extends EntityBase {
                 gameState.pylons.push(new Pylon(this.floorIndex, -112, -748, true))
                 gameState.pylons.push(new Pylon(this.floorIndex, 112, -748, true))
                 gameState.enemies.push(new EnemyBoss(this.floorIndex, 0, -638))
+
             }
             this.hasSpawnedObjects = true
         }
-
 
         if (DEBUG) {
             this.debugGrid = this.scene.add.grid(0, 0, 1024, 1024, 32, 32, undefined, undefined, 0xFF00FF, 0.25)
@@ -334,6 +337,21 @@ export class Floor extends EntityBase {
     update(t: number, dt: number) {
         super.update(t, dt)
         if (!this.active) return
+
+        if (this.isBossFloor && this.hasSpawnedObjects) {
+            const shouldOpenBossRoom = gameState.pylons.filter(p => p.floorIndex === this.floorIndex && !p.boss).every(p => p.isPowered)
+            if (shouldOpenBossRoom && !this.hasOpenedBossRoom) {
+                this.hasOpenedBossRoom = true
+                this.setVerticalDoor(11, 23, true)
+                this.setVerticalDoor(11, 24, true)
+            }
+            const shouldOpenBossElevator = gameState.enemies.filter(p => p.floorIndex === this.floorIndex && p instanceof EnemyBoss).length === 0
+            if (shouldOpenBossElevator && !this.hasOpenedBossElevator) {
+                this.hasOpenedBossElevator = true
+                this.setVerticalDoor(11, 7, true)
+                this.setVerticalDoor(11, 8, true)
+            }
+        }
     }
 
     private spawnRoom(sx: number, sy: number) {
@@ -373,25 +391,27 @@ export class Floor extends EntityBase {
             this.clearRoom(dx, dy)
         }
     }
-
     private setRoomDoors(dx: number, dy: number, neighborUp: boolean | null, neighborRight: boolean | null, neighborDown: boolean | null, neighborLeft: boolean | null) {
-        if (neighborUp !== null) {
-            this.setTile(dx + 3, dy + 0, neighborUp ? -1 : 164, neighborUp ? 160 : -1)
-            this.setTile(dx + 4, dy + 0, neighborUp ? -1 : 165, neighborUp ? 161 : -1)
-        }
-        if (neighborDown !== null) {
-            this.setTile(dx + 3, dy + 7, neighborDown ? -1 : 164, neighborDown ? 160 : -1)
-            this.setTile(dx + 4, dy + 7, neighborDown ? -1 : 165, neighborDown ? 161 : -1)
-        }
-        if (neighborLeft !== null) {
-            this.setTile(dx + 0, dy + 3, neighborLeft ? -1 : 166, neighborLeft ? 162 : -1)
-            this.setTile(dx + 0, dy + 4, neighborLeft ? -1 : 167, neighborLeft ? 163 : -1)
-        }
-        if (neighborRight !== null) {
-            this.setTile(dx + 7, dy + 3, neighborRight ? -1 : 166, neighborRight ? 162 : -1)
-            this.setTile(dx + 7, dy + 4, neighborRight ? -1 : 167, neighborRight ? 163 : -1)
+        if (neighborUp !== null) this.setVerticalDoor(dx + 3, dy + 0, neighborUp)
+        if (neighborDown !== null) this.setVerticalDoor(dx + 3, dy + 7, neighborDown)
+        if (neighborLeft !== null) this.setHorizontalDoor(dx + 0, dy + 3, neighborLeft)
+        if (neighborRight !== null) this.setHorizontalDoor(dx + 7, dy + 3, neighborRight)
+    }
+
+    private setHorizontalDoor(dx: number, dy: number, open: boolean) {
+        if (open) {
+            this.setTile(dx + 0, dy + 0, open ? -1 : 166, open ? 162 : -1)
+            this.setTile(dx + 0, dy + 1, open ? -1 : 167, open ? 163 : -1)
         }
     }
+
+    private setVerticalDoor(dx: number, dy: number, open: boolean) {
+        if (open) {
+            this.setTile(dx + 0, dy + 0, open ? -1 : 164, open ? 160 : -1)
+            this.setTile(dx + 1, dy + 0, open ? -1 : 165, open ? 161 : -1)
+        }
+    }
+
 
     private copyRoom(sx: number, sy: number, dx: number, dy: number) {
         return this.copyRect(sx, sy, dx, dy, 8, 8)
@@ -541,7 +561,7 @@ export class Player extends UnitBase {
     get invulnPeriod() { return 1 }
 
     constructor() {
-        super(0, 0, 0, 50, 100)
+        super(4, 0, 0, 50, 100)
     }
 
     initialize() {
@@ -1421,7 +1441,7 @@ export class BulletPulse extends BulletBase {
 }
 
 export class BulletTracker extends BulletBase {
-    trackingTime: number = 0.5
+    trackingTime: number = 0.125
 
     get spriteKey() { return this.friendly ? 'projectile-ally-tracking' : 'projectile-enemy-tracking' }
 
@@ -1591,7 +1611,8 @@ export class GameState {
     dropGroup!: Phaser.GameObjects.Group
     bulletGroup!: Phaser.GameObjects.Group
 
-    music!: Phaser.Sound.BaseSound
+    normalMusic!: Phaser.Sound.BaseSound
+    bossMusic!: Phaser.Sound.BaseSound
     bumpSound!: Phaser.Sound.BaseSound
     damageSound!: Phaser.Sound.BaseSound
     shootSound!: Phaser.Sound.BaseSound
@@ -1665,7 +1686,9 @@ export class GameplayScene extends Phaser.Scene {
         this.load.spritesheet('power-bar-boss', 'assets/Power-Bar-Boss.png', { frameWidth: 16 })
         this.load.spritesheet('power-bar-player', 'assets/Power-Bar-Player.png', { frameWidth: 16 })
 
-        this.load.audio('music', 'assets/dire-space-emergency.mp3')
+        this.load.audio('music-normal', 'assets/dire-space-emergency.mp3')
+        this.load.audio('music-boss', 'assets/chipstep.mp3')
+        this.load.audio('music-menu', 'assets/underglow.mp3')
         this.load.audio('sound-bump', 'assets/bump.wav')
         this.load.audio('sound-damage', 'assets/damage.wav')
         this.load.audio('sound-shoot', 'assets/laserShoot.wav')
@@ -1683,7 +1706,8 @@ export class GameplayScene extends Phaser.Scene {
         this.text.setDepth(9999)
         this.text.setScrollFactor(0, 0)
         this.text.setOrigin(0, 1)
-        gameState.music = this.sound.add('music')
+        gameState.normalMusic = this.sound.add('music-normal')
+        gameState.bossMusic = this.sound.add('music-boss')
         gameState.bumpSound = this.sound.add('sound-bump')
         gameState.damageSound = this.sound.add('sound-damage')
         gameState.shootSound = this.sound.add('sound-shoot')
@@ -1706,7 +1730,11 @@ export class GameplayScene extends Phaser.Scene {
 
         const tick = Math.floor(t / gameState.tickRate) * gameState.tickRate
         if (t / gameState.tickRate >= tick && t - dt <= tick) {
-            if (!gameState.music.isPlaying) gameState.music.play()
+            const playBossMusic = gameState.enemies.some(e => e.isOnCurrentFloor && e.active && e instanceof EnemyBoss) && gameState.floor.hasOpenedBossRoom
+            if (!playBossMusic && !gameState.normalMusic.isPlaying) gameState.normalMusic.play()
+            if (playBossMusic && !gameState.bossMusic.isPlaying) gameState.bossMusic.play()
+            if (playBossMusic && gameState.normalMusic.isPlaying) gameState.normalMusic.stop()
+            if (!playBossMusic && gameState.bossMusic.isPlaying) gameState.bossMusic.stop()
         }
     }
 
