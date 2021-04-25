@@ -18,7 +18,7 @@ function dist(a: { x: number, y: number }, b: { x: number, y: number }) {
 }
 
 function get3dSound(ent: { x: number, y: number }) {
-    return { pan: Math.min(1, Math.max(-1, (ent.x - gameState.player.x) / 640)), volume: 1 - Math.min(1, Math.max(dist(ent, gameState.player) / 640)) }
+    return { pan: Math.min(1, Math.max(-1, (ent.x - gameState.player.x) / 640)), volume: 1 - Math.min(1, Math.max(dist(ent, gameState.player) / 320)) }
 }
 
 export class DroneSchematic {
@@ -113,8 +113,7 @@ export class Floor extends EntityBase {
         this.floorIndex = gameState.floors.indexOf(this)
 
         this.roomUpType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
-        //this.roomRightType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
-        this.roomRightType = 0
+        this.roomRightType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
         this.roomDownType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
         this.roomLeftType = Math.random() > 0.25 ? Math.floor(Math.random() * 2) : -1
     }
@@ -702,41 +701,47 @@ export class EnemyHoverPunch extends EnemyBase {
 }
 
 export class EnemySpinBoomerang extends EnemyBase {
+    collisionDebounce: number = 0
 
     get movementType() { return 'spinning' as const }
     get attachSpriteKey() { return 'enemy-boomerang-spin' }
 
     constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
-        super(x, y, facing, 10, 10, schematic)
+        super(x, y, facing, 20, 10, schematic)
     }
 
     tick() {
         super.tick()
         const speed = 64
         const dx = this.facing === 'up' || this.facing === 'right' ? 1 : -1
-        const dy = this.facing === 'up' || this.facing === 'left' ? 1 : -1
+        const dy = this.facing === 'down' || this.facing === 'right' ? 1 : -1
         this.body.setVelocity(dx * speed, dy * speed)
+        this.collisionDebounce--
     }
 
     wallCollision() {
         super.wallCollision()
-        switch (this.facing) {
-            case 'up':
-                if (this.body.touching.up) this.facing = 'right'
-                if (this.body.touching.right) this.facing = 'left'
-                break
-            case 'right':
-                if (this.body.touching.right) this.facing = 'down'
-                if (this.body.touching.down) this.facing = 'up'
-                break
-            case 'down':
-                if (this.body.touching.down) this.facing = 'left'
-                if (this.body.touching.left) this.facing = 'right'
-                break
-            case 'left':
-                if (this.body.touching.left) this.facing = 'up'
-                if (this.body.touching.up) this.facing = 'down'
-                break
+        if (this.collisionDebounce <= 0) {
+            this.collisionDebounce = 2
+            switch (this.facing) {
+                case 'up':
+                    if (this.body.blocked.up) this.facing = 'right'
+                    if (this.body.blocked.right) this.facing = 'left'
+                    break
+                case 'right':
+                    if (this.body.blocked.right) this.facing = 'down'
+                    if (this.body.blocked.down) this.facing = 'up'
+                    break
+                case 'down':
+                    if (this.body.blocked.down) this.facing = 'left'
+                    if (this.body.blocked.left) this.facing = 'right'
+                    break
+                case 'left':
+                    if (this.body.blocked.left) this.facing = 'up'
+                    if (this.body.blocked.up) this.facing = 'down'
+                    break
+            }
+            this.tick()
         }
     }
 }
