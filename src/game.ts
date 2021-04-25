@@ -312,6 +312,7 @@ export class Floor extends EntityBase {
         }
 
         this.collider = this.scene.physics.add.collider([gameState.playerGroup, gameState.droneGroup, gameState.enemyGroup, gameState.bulletGroup], this.fgLayer, other => {
+            if (!other || !other.body) return
             gameState.bumpSound.play(get3dSound(other.body))
 
             const b = gameState.bullets.find(b => b.spawned && b.body === other.body)
@@ -534,7 +535,7 @@ export abstract class UnitBase extends ActorBase {
             if (dmg > 0) {
                 this.power -= dmg
                 this.hurtTime = this.invulnPeriod
-                const dir = new Phaser.Math.Vector2(this.sprite.x - inflictor.sprite.x, this.sprite.y - inflictor.sprite.y).normalize()
+                const dir = new Phaser.Math.Vector2(this.x - inflictor.x, this.y - inflictor.y).normalize()
                 this.hurtDirX = dir.x
                 this.hurtDirY = dir.y
                 gameState.damageSound.play(get3dSound(this))
@@ -558,7 +559,7 @@ export class Player extends UnitBase {
     get invulnPeriod() { return 1 }
 
     constructor() {
-        super(0, 0, 0, 150, 150)
+        super(0, 0, 0, 100, 100)
     }
 
     initialize() {
@@ -575,6 +576,7 @@ export class Player extends UnitBase {
 
     spawn(scene: Phaser.Scene) {
         super.spawn(scene)
+        this.body.setSize(20, 20)
         gameState.playerGroup.add(this.sprite)
     }
 
@@ -622,7 +624,8 @@ export class Player extends UnitBase {
             } else if (target instanceof InteractableBase) {
                 target.interact()
             } else if (target instanceof DroneSchematic) {
-                this.power -= target.cost
+                if (!gameState.pylons.some(p => p.floorIndex === this.floorIndex && p.boss && p.isPowered))
+                    this.power -= target.cost
                 const drone = target.create(this, target)
                 gameState.drones.push(drone)
             }
@@ -1032,22 +1035,32 @@ export abstract class EnemyBase extends DroneLikeBase {
 }
 
 export class EnemyBoss extends EnemyBase {
-    waveCounter: number = 0
+    subtick: number = 0
 
     get movementType() { return 'boss' as const }
     get attachSpriteKey() { return 'transparent' }
     get isInvulnerable() { return this.hurtTime > 0 || !gameState.pylons.filter(p => p.floorIndex === this.floorIndex && p.boss).every(p => p.isPowered) }
 
     constructor(floorIndex: number, x: number, y: number) {
-        super(floorIndex, x, y, 'down', 200, 15, bossSchematic)
+        super(floorIndex, x, y, 'down', 100, 10, bossSchematic)
+    }
+
+    spawn(scene: Phaser.Scene) {
+        super.spawn(scene)
+        this.body.setSize(60, 60)
     }
 
     tick() {
         super.tick()
         if (!this.active || !this.floor.hasOpenedBossRoom) return
-        if (this.waveCounter === 8) {
+        if ((this.subtick % 4) === 0) {
+            this.body.setVelocity(rand(1, -1) * 64, rand(1, -1) * 64)
+        } else {
+            this.body.setVelocity(0, 0)
+        }
+        if (this.subtick === 16) {
             const pylonsActive = gameState.pylons.filter(p => p.floorIndex === this.floorIndex && p.boss && p.isPowered).length
-            let enemyBudget = rand(1, 2 + pylonsActive) * 10
+            let enemyBudget = rand(1, 1 + pylonsActive) * 10
             const tiles = this.floor.getEmptyTiles(this.mapX - 1, this.mapY - 1, 3, 3).filter(t => !gameState.enemies.some(e => e.floorIndex === this.floorIndex && e.mapX === t.tx && e.mapY === t.ty))
             while (enemyBudget > 0 && tiles.length) {
                 const { x, y } = tiles.pop()!
@@ -1056,9 +1069,9 @@ export class EnemyBoss extends EnemyBase {
                 enemyBudget -= schematic.cost
                 gameState.enemies.push(schematic.create(this.floorIndex, x, y, randItem(FACING_4WAY)!, schematic))
             }
-            this.waveCounter = 0
+            this.subtick = 0
         } else {
-            this.waveCounter++
+            this.subtick++
         }
     }
 
@@ -1593,7 +1606,7 @@ export class Pylon extends ActorBase {
         const dx = Math.abs(gameState.player.x - this.x)
         const dy = Math.abs(gameState.player.y - this.y)
         if (dx < 48 && dy < 48) {
-            if (!this.isPowered) this.progress += dt * (this.boss ? 1 : 1.5)
+            if (!this.isPowered) this.progress += dt * (this.boss ? 1.5 : 2)
             while (this.progress > 1) {
                 this.progress--
                 this.power = Math.min(this.maxPower, this.power + 1)
