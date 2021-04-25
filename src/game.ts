@@ -28,7 +28,9 @@ export class DroneSchematic {
 }
 
 export const droneSchematics = [
-    new DroneSchematic('Turret', 10, (p, s) => new DroneTurret(p.x, p.y, p.facing, s)),
+    new DroneSchematic('Turret', 10, (p, s) => new DroneGun(p.x, p.y, p.facing, s)),
+    new DroneSchematic('Puncher', 15, (p, s) => new DroneHoverPunch(p.x, p.y, p.facing, s)),
+    new DroneSchematic('Boomerang', 15, (p, s) => new DroneSpinBoomerang(p.x, p.y, p.facing, s)),
 ]
 
 export class EnemySchematic {
@@ -39,10 +41,13 @@ export class EnemySchematic {
 }
 
 export const enemySchematics = [
-    new EnemySchematic('Turret', (x, y, facing, s) => new EnemyTurret(x, y, facing, s)),
-    new EnemySchematic('Hover Turret', (x, y, facing, s) => new EnemyHoverTurret(x, y, facing, s)),
+    new EnemySchematic('Turret', (x, y, facing, s) => new EnemyGun(x, y, facing, s)),
+    new EnemySchematic('Hover Turret', (x, y, facing, s) => new EnemyHoverGun(x, y, facing, s)),
     new EnemySchematic('Hover Puncher', (x, y, facing, s) => new EnemyHoverPunch(x, y, facing, s)),
     new EnemySchematic('Spin Boomerang', (x, y, facing, s) => new EnemySpinBoomerang(x, y, facing, s)),
+    new EnemySchematic('Directional Turret', (x, y, facing, s) => new EnemyDirectionalTurret(x, y, facing, s)),
+    new EnemySchematic('Multishot Turret', (x, y, facing, s) => new EnemyMultishot(x, y, facing, s)),
+    new EnemySchematic('Hover Multishot', (x, y, facing, s) => new EnemyHoverMultishot(x, y, facing, s)),
 ]
 
 export abstract class EntityBase {
@@ -293,7 +298,7 @@ export abstract class UnitBase extends ActorBase {
     get isHurting() { return this.hurtTime > 0 }
 
     abstract get invulnPeriod(): number
-    abstract get movementType(): 'stationary' | 'hovering' | 'spinning'
+    abstract get movementType(): 'stationary' | 'hovering' | 'spinning' | 'directional'
 
     constructor(x: number, y: number, public power: number, public maxPower: number = power) {
         super(x, y)
@@ -328,13 +333,14 @@ export abstract class UnitBase extends ActorBase {
     hurt(damage: number, inflictor: ActorBase) {
         if (!this.isHurting && !this.dead) {
             const dmg = Math.min(this.power, damage)
-            this.power -= dmg
-            this.hurtTime = this.invulnPeriod
-            const dir = new Phaser.Math.Vector2(this.sprite.x - inflictor.sprite.x, this.sprite.y - inflictor.sprite.y).normalize()
-            this.hurtDirX = dir.x
-            this.hurtDirY = dir.y
-
-            gameState.damageSound.play(get3dSound(this))
+            if (dmg > 0) {
+                this.power -= dmg
+                this.hurtTime = this.invulnPeriod
+                const dir = new Phaser.Math.Vector2(this.sprite.x - inflictor.sprite.x, this.sprite.y - inflictor.sprite.y).normalize()
+                this.hurtDirX = dir.x
+                this.hurtDirY = dir.y
+                gameState.damageSound.play(get3dSound(this))
+            }
         }
     }
 
@@ -445,6 +451,7 @@ export class Player extends UnitBase {
 
     die() {
         super.die()
+        this.body.setVelocity(0, 0)
     }
 }
 
@@ -454,14 +461,14 @@ export abstract class DroneLikeBase extends UnitBase {
 
     abstract get attachSpriteKey(): string
 
-    constructor(x: number, y: number, facing: Facing4Way, power: number) {
+    constructor(x: number, y: number, facing: Facing4Way, power: number, public impactDamage: number) {
         super(x, y, power)
         this.facing = facing
     }
 
     initialize() {
         super.initialize()
-        if (this.movementType === 'hovering') {
+        if (this.movementType === 'hovering' || this.movementType === 'directional') {
             this.scene.anims.create({ key: `drone-up-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
             this.scene.anims.create({ key: `drone-right-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 4, end: 7 }), frameRate: 5, repeat: -1 })
             this.scene.anims.create({ key: `drone-down-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 8, end: 11 }), frameRate: 5, repeat: -1 })
@@ -505,7 +512,7 @@ export abstract class DroneLikeBase extends UnitBase {
 
     update(t: number, dt: number) {
         super.update(t, dt)
-        if (!this.active) return
+        if (!this.active || this.dead) return
         const tick = Math.floor(t / gameState.tickRate) * gameState.tickRate
         if (t / gameState.tickRate >= tick && t - dt <= tick) {
             this.tick()
@@ -530,25 +537,43 @@ export abstract class DroneLikeBase extends UnitBase {
     wallCollision() {
 
     }
+
+    die() {
+        super.die()
+        this.body.setVelocity(0, 0)
+    }
 }
 
 export abstract class DroneBase extends DroneLikeBase {
+    collider!: Phaser.Physics.Arcade.Collider
 
-    get spriteKey() { return 'drone-core' }
+    get spriteKey() {
+        return this.movementType === 'hovering' ? 'drone-core-hover' :
+            this.movementType === 'spinning' ? 'drone-core-spin' :
+                this.movementType === 'directional' ? 'drone-core-directional' :
+                    'drone-core'
+    }
     get invulnPeriod() { return 1 }
 
-    constructor(x: number, y: number, facing: Facing4Way, public schematic: DroneSchematic) {
-        super(x, y, facing, schematic.cost)
+    constructor(x: number, y: number, facing: Facing4Way, impactDamage: number, public schematic: DroneSchematic) {
+        super(x, y, facing, schematic.cost, impactDamage)
     }
 
     spawn(scene: Phaser.Scene) {
         super.spawn(scene)
         gameState.droneGroup.add(this.sprite)
+        this.collider = this.scene.physics.add.overlap(this.sprite, gameState.enemyGroup, (_, other) => {
+            if (!this.dead && this.power > 0) {
+                const target = gameState.enemies.find(e => e.spawned && e.body === other.body)
+                target?.hurt(this.impactDamage, this)
+            }
+        }, undefined, this)
     }
 
     despawn() {
         super.despawn()
         gameState.droneGroup.remove(this.sprite)
+        if (this.collider) this.collider.destroy()
     }
 
     destroy() {
@@ -561,9 +586,13 @@ export abstract class DroneBase extends DroneLikeBase {
     }
 }
 
-export class DroneTurret extends DroneBase {
+export class DroneGun extends DroneBase {
     get attachSpriteKey() { return 'drone-gun' }
     get movementType() { return 'stationary' as const }
+
+    constructor(x: number, y: number, facing: Facing4Way, schematic: DroneSchematic) {
+        super(x, y, facing, 0, schematic)
+    }
 
     tick() {
         super.tick()
@@ -576,18 +605,103 @@ export class DroneTurret extends DroneBase {
     }
 }
 
+export class DroneHoverPunch extends DroneBase {
+    collisionDebounce: number = 0
+
+    get movementType() { return 'hovering' as const }
+    get attachSpriteKey() { return 'drone-punch-hover' }
+
+    constructor(x: number, y: number, facing: Facing4Way, schematic: DroneSchematic) {
+        super(x, y, facing, 10, schematic)
+    }
+
+    tick() {
+        super.tick()
+        this.recalculateVelocity()
+        this.power--
+        this.collisionDebounce--
+    }
+
+    wallCollision() {
+        super.wallCollision()
+        if (this.collisionDebounce <= 0) {
+            this.collisionDebounce = 2
+            if (this.facing === 'up') this.facing = 'down'
+            else if (this.facing === 'right') this.facing = 'left'
+            else if (this.facing === 'down') this.facing = 'up'
+            else if (this.facing === 'left') this.facing = 'right'
+            this.recalculateVelocity()
+            super.tick()
+        }
+    }
+
+    private recalculateVelocity() {
+        const speed = 128
+        const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
+        const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
+        this.body.setVelocity(dx * speed, dy * speed)
+    }
+}
+
+export class DroneSpinBoomerang extends DroneBase {
+    collisionDebounce: number = 0
+
+    get movementType() { return 'spinning' as const }
+    get attachSpriteKey() { return 'drone-boomerang-spin' }
+
+    constructor(x: number, y: number, facing: Facing4Way, schematic: DroneSchematic) {
+        super(x, y, facing, 10, schematic)
+    }
+
+    tick() {
+        super.tick()
+        const speed = 64
+        const dx = this.facing === 'up' || this.facing === 'right' ? 1 : -1
+        const dy = this.facing === 'down' || this.facing === 'right' ? 1 : -1
+        this.body.setVelocity(dx * speed, dy * speed)
+        this.collisionDebounce--
+    }
+
+    wallCollision() {
+        super.wallCollision()
+        if (this.collisionDebounce <= 0) {
+            this.collisionDebounce = 2
+            switch (this.facing) {
+                case 'up':
+                    if (this.body.blocked.up) this.facing = 'right'
+                    if (this.body.blocked.right) this.facing = 'left'
+                    break
+                case 'right':
+                    if (this.body.blocked.right) this.facing = 'down'
+                    if (this.body.blocked.down) this.facing = 'up'
+                    break
+                case 'down':
+                    if (this.body.blocked.down) this.facing = 'left'
+                    if (this.body.blocked.left) this.facing = 'right'
+                    break
+                case 'left':
+                    if (this.body.blocked.left) this.facing = 'up'
+                    if (this.body.blocked.up) this.facing = 'down'
+                    break
+            }
+            this.tick()
+        }
+    }
+}
+
 export abstract class EnemyBase extends DroneLikeBase {
     collider!: Phaser.Physics.Arcade.Collider
 
     get spriteKey() {
         return this.movementType === 'hovering' ? 'enemy-core-hover' :
             this.movementType === 'spinning' ? 'enemy-core-spin' :
-                'enemy-core'
+                this.movementType === 'directional' ? 'enemy-core-directional' :
+                    'enemy-core'
     }
-    get invulnPeriod() { return 0 }
+    get invulnPeriod() { return 0.25 }
 
-    constructor(x: number, y: number, facing: Facing4Way, power: number, public impactDamage: number, public schematic: EnemySchematic) {
-        super(x, y, facing, power)
+    constructor(x: number, y: number, facing: Facing4Way, power: number, impactDamage: number, public schematic: EnemySchematic) {
+        super(x, y, facing, power, impactDamage)
     }
 
     spawn(scene: Phaser.Scene) {
@@ -622,7 +736,7 @@ export abstract class EnemyBase extends DroneLikeBase {
     }
 }
 
-export class EnemyTurret extends EnemyBase {
+export class EnemyGun extends EnemyBase {
     subtick: number = 0
     get movementType() { return 'stationary' as const }
     get attachSpriteKey() { return 'enemy-gun' }
@@ -647,7 +761,38 @@ export class EnemyTurret extends EnemyBase {
     }
 }
 
-export class EnemyHoverTurret extends EnemyBase {
+export class EnemyMultishot extends EnemyBase {
+    subtick: number = 0
+    get movementType() { return 'stationary' as const }
+    get attachSpriteKey() { return 'enemy-multishot' }
+
+    constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
+        super(x, y, facing, 20, 5, schematic)
+    }
+
+    tick() {
+        super.tick()
+        if (this.subtick === 0) {
+            if (this.facing === 'up') this.facing = 'right'
+            else if (this.facing === 'right') this.facing = 'down'
+            else if (this.facing === 'down') this.facing = 'left'
+            else if (this.facing === 'left') this.facing = 'up'
+        } else if (this.subtick === 1) {
+            const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
+            const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
+
+            const ox = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
+            const oy = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
+
+            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx + ox, dy + oy, 256, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 256, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx - ox, dy - oy, 256, 2, false, 5))
+        }
+        this.subtick = (this.subtick + 1) % 2
+    }
+}
+
+export class EnemyHoverGun extends EnemyBase {
     subtick: number = 0
     get movementType() { return 'hovering' as const }
     get attachSpriteKey() { return 'enemy-gun-hover' }
@@ -669,6 +814,39 @@ export class EnemyHoverTurret extends EnemyBase {
             const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
             const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
             gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, false, 5))
+        }
+        this.subtick = (this.subtick + 1) % 2
+    }
+}
+
+export class EnemyHoverMultishot extends EnemyBase {
+    subtick: number = 0
+    get movementType() { return 'hovering' as const }
+    get attachSpriteKey() { return 'enemy-multishot-hover' }
+
+    constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
+        super(x, y, facing, 25, 5, schematic)
+    }
+
+    tick() {
+        super.tick()
+        if (this.subtick === 0) {
+            let dx = gameState.player.sprite.x - this.sprite.x
+            let dy = gameState.player.sprite.y - this.sprite.y
+            if (Math.abs(dx) > Math.abs(dy))
+                this.facing = dx < 0 ? 'left' : 'right'
+            else
+                this.facing = dy < 0 ? 'up' : 'down'
+        } else if (this.subtick === 1) {
+            const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
+            const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
+
+            const ox = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
+            const oy = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
+
+            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx + ox, dy + oy, 256, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 256, 2, false, 5))
+            gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx - ox, dy - oy, 256, 2, false, 5))
         }
         this.subtick = (this.subtick + 1) % 2
     }
@@ -743,6 +921,53 @@ export class EnemySpinBoomerang extends EnemyBase {
             }
             this.tick()
         }
+    }
+}
+
+export class EnemyDirectionalTurret extends EnemyBase {
+    moveFacing: Facing4Way = 'up'
+    collisionDebounce: number = 0
+
+    get movementType() { return 'directional' as const }
+    get attachSpriteKey() { return 'enemy-gun-hover' }
+
+    constructor(x: number, y: number, facing: Facing4Way, schematic: EnemySchematic) {
+        super(x, y, facing, 10, 5, schematic)
+        this.moveFacing =
+            facing === 'up' ? 'right' :
+                facing === 'right' ? 'down' :
+                    facing === 'down' ? 'left' :
+                        'up'
+    }
+
+    tick() {
+        super.tick()
+        this.recalculateVelocity()
+        this.collisionDebounce--
+
+        const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
+        const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
+        gameState.bullets.push(new BulletPulse(this.x + dx * 16, this.y + dy * 16, dx, dy, 512, 2, false, 5))
+    }
+
+    wallCollision() {
+        super.wallCollision()
+        if (this.collisionDebounce <= 0) {
+            this.collisionDebounce = 2
+            if (this.moveFacing === 'up') this.moveFacing = 'down'
+            else if (this.moveFacing === 'right') this.moveFacing = 'left'
+            else if (this.moveFacing === 'down') this.moveFacing = 'up'
+            else if (this.moveFacing === 'left') this.moveFacing = 'right'
+            this.recalculateVelocity()
+            super.tick()
+        }
+    }
+
+    private recalculateVelocity() {
+        const speed = 64
+        const dx = this.moveFacing === 'left' ? -1 : this.moveFacing === 'right' ? 1 : 0
+        const dy = this.moveFacing === 'up' ? -1 : this.moveFacing === 'down' ? 1 : 0
+        this.body.setVelocity(dx * speed, dy * speed)
     }
 }
 
@@ -828,7 +1053,7 @@ export abstract class BulletBase extends ActorBase {
     spawn(scene: Phaser.Scene) {
         super.spawn(scene)
         gameState.bulletGroup.add(this.sprite)
-        this.body.setSize(16, 16)
+        this.body.setSize(8, 8)
         this.collider = this.scene.physics.add.overlap(this.sprite, [gameState.playerGroup, gameState.droneGroup, gameState.enemyGroup], (_, other) => {
             const target = gameState.player.body === other.body ? gameState.player : (gameState.drones.find(d => d.spawned && d.body === other.body) ?? gameState.enemies.find(e => e.spawned && e.body === other.body))
             if (target && this.hit(target)) this.destroy()
@@ -925,10 +1150,13 @@ export class GameState {
     player: Player = new Player()
     drones: DroneBase[] = []
     enemies: EnemyBase[] = [
-        new EnemyTurret(256, 64, 'down', enemySchematics[0]),
-        new EnemyHoverTurret(240, -32, 'right', enemySchematics[1]),
+        new EnemyGun(256, 64, 'down', enemySchematics[0]),
+        new EnemyHoverGun(240, -32, 'right', enemySchematics[1]),
         new EnemyHoverPunch(272, 32, 'left', enemySchematics[2]),
         new EnemySpinBoomerang(64, 48, 'right', enemySchematics[3]),
+        new EnemyDirectionalTurret(64, 16, 'left', enemySchematics[4]),
+        new EnemyMultishot(240, 64, 'up', enemySchematics[5]),
+        new EnemyHoverMultishot(256, -64, 'left', enemySchematics[6]),
     ]
     drops: DropBase[] = []
     bullets: BulletBase[] = []
@@ -973,13 +1201,21 @@ export class GameplayScene extends Phaser.Scene {
         this.load.image('placeholder', 'assets/placeholder.png')
         this.load.spritesheet('player', 'assets/Battery-Bot.png', { frameWidth: 32 })
         this.load.spritesheet('drone-core', 'assets/Drone-Core.png', { frameWidth: 32 })
+        this.load.spritesheet('drone-core-hover', 'assets/Drone-Core-Hovering.png', { frameWidth: 32 })
+        this.load.spritesheet('drone-core-spin', 'assets/Drone-Core-Spinning.png', { frameWidth: 32 })
+        this.load.spritesheet('drone-core-directional', 'assets/Drone-Core-Directional.png', { frameWidth: 32 })
         this.load.spritesheet('drone-gun', 'assets/Drone_Gun.png', { frameWidth: 32 })
+        this.load.spritesheet('drone-punch-hover', 'assets/Drone-Punch-Hovering.png', { frameWidth: 32 })
+        this.load.spritesheet('drone-boomerang-spin', 'assets/Drone-Boomerang.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-core', 'assets/Enemy-Core-Stationary.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-gun', 'assets/Enemy-Gun-Stationary.png', { frameWidth: 32 })
+        this.load.spritesheet('enemy-multishot', 'assets/Enemy-Multishot-Stationary.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-core-hover', 'assets/Enemy-Core-Hovering.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-core-spin', 'assets/Enemy-Core-Spinning.png', { frameWidth: 32 })
+        this.load.spritesheet('enemy-core-directional', 'assets/Enemy-Core-Directional.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-gun-hover', 'assets/Enemy-Gun-Hovering.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-punch-hover', 'assets/Enemy-Punch-Hovering.png', { frameWidth: 32 })
+        this.load.spritesheet('enemy-multishot-hover', 'assets/Enemy-Multishot-Hovering.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-boomerang-spin', 'assets/Enemy-Boomerang.png', { frameWidth: 32 })
         this.load.spritesheet('power-bar', 'assets/Power-Bar.png', { frameWidth: 32 })
         this.load.spritesheet('drop-shadow', 'assets/DropShadow.png', { frameWidth: 32 })
