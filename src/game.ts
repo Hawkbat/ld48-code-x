@@ -77,6 +77,8 @@ export const enemySchematics = [
     new EnemySchematic('Hover Multishot', 25, (f, x, y, facing, s) => new EnemyHoverMultishot(f, x, y, facing, s)),
 ]
 
+export const bossSchematic = new EnemySchematic('Boss', Infinity, (f, x, y) => new EnemyBoss(f, x, y))
+
 export abstract class EntityBase {
     active: boolean = false
     initialized: boolean = false
@@ -88,6 +90,9 @@ export abstract class EntityBase {
     }
 
     get floor() { return gameState.floors[this.floorIndex] }
+    get isOnCurrentFloor() {
+        return this.floorIndex === gameState.floorIndex
+    }
 
     initialize() {
         this.initialized = true
@@ -116,6 +121,64 @@ export abstract class EntityBase {
     update(t: number, dt: number) { }
 
     postUpdate() { }
+}
+
+export abstract class ElementBase extends EntityBase {
+    abstract get screenX(): number
+    abstract get screenY(): number
+}
+
+export abstract class PowerBarBase extends ElementBase {
+    sprites: Phaser.GameObjects.Sprite[] = []
+
+    get isOnCurrentFloor() { return this.target?.isOnCurrentFloor ?? false }
+
+    abstract get spriteKey(): string
+    abstract get target(): UnitBase | undefined
+
+    constructor() {
+        super(-1)
+    }
+
+    despawn() {
+        super.despawn()
+        while (this.sprites.length) destroyComponent(this.sprites.pop()!)
+    }
+
+    postUpdate() {
+        super.postUpdate()
+        if (!this.active) return
+        const count = this.target ? Math.ceil(this.target.maxPower / 10) : 0
+        while (this.sprites.length > count) destroyComponent(this.sprites.pop()!)
+        for (let i = 0; i < count; i++) {
+            while (this.sprites.length <= i)
+                this.sprites.push(this.scene.add.sprite(0, 0, this.spriteKey))
+
+            const val = this.target ? this.target.power - i * 10 : 0
+            const col = i === 0 ? 0 : i === count - 1 ? 2 : 1
+            const row = val >= 10 ? 0 : val >= 5 ? 1 : 2
+            this.sprites[i].setFrame(row * 3 + col)
+            this.sprites[i].setScrollFactor(0, 0)
+            this.sprites[i].setPosition(this.screenX + i * 16 + 12, this.screenY + 8)
+            this.sprites[i].setDepth(9900)
+        }
+    }
+}
+
+export class PlayerPowerBar extends PowerBarBase {
+
+    get spriteKey() { return 'power-bar-player' }
+    get screenX() { return 0 }
+    get screenY() { return 0 }
+    get target() { return gameState.player }
+}
+
+export class BossPowerBar extends PowerBarBase {
+
+    get spriteKey() { return 'power-bar-boss' }
+    get screenX() { return 640 / 2 - (this.target?.maxPower ?? 0) / 10 * 8 - 6 }
+    get screenY() { return 480 - 192 }
+    get target() { return gameState.enemies.find(e => e.active && e.isOnCurrentFloor && e instanceof EnemyBoss) }
 }
 
 export class Floor extends EntityBase {
@@ -222,6 +285,15 @@ export class Floor extends EntityBase {
             gameState.interactibles.push(new InteractableElevatorButton(this.floorIndex, 64, -80, -1, true))
             if (this.isBossFloor) {
                 gameState.interactibles.push(new InteractableElevatorButton(this.floorIndex, -64, -1104, 1, false))
+                gameState.pylons.push(new Pylon(this.floorIndex, -16, -268, false))
+                gameState.pylons.push(new Pylon(this.floorIndex, 16, -268, false))
+                gameState.pylons.push(new Pylon(this.floorIndex, -16, -236, false))
+                gameState.pylons.push(new Pylon(this.floorIndex, 16, -236, false))
+                gameState.pylons.push(new Pylon(this.floorIndex, -112, -524, true))
+                gameState.pylons.push(new Pylon(this.floorIndex, 112, -524, true))
+                gameState.pylons.push(new Pylon(this.floorIndex, -112, -748, true))
+                gameState.pylons.push(new Pylon(this.floorIndex, 112, -748, true))
+                gameState.enemies.push(new EnemyBoss(this.floorIndex, 0, -638))
             }
             this.hasSpawnedObjects = true
         }
@@ -360,23 +432,27 @@ export class Floor extends EntityBase {
 
 export abstract class ActorBase extends EntityBase {
     sprite!: Phaser.GameObjects.Sprite
+    shadowSprite!: Phaser.GameObjects.Sprite
 
     constructor(floorIndex: number, public x: number, public y: number) {
         super(floorIndex)
     }
 
     abstract get spriteKey(): string
+    abstract get shadowOffset(): number
 
     get body() { return this.sprite.body as Phaser.Physics.Arcade.Body }
 
     spawn(scene: Phaser.Scene) {
         super.spawn(scene)
         this.sprite = scene.physics.add.sprite(this.x, this.y, this.spriteKey, 0)
+        this.shadowSprite = this.scene.add.sprite(this.x, this.y, 'drop-shadow')
     }
 
     despawn() {
         super.despawn()
         this.sprite = destroyComponent(this.sprite)
+        this.shadowSprite = destroyComponent(this.shadowSprite)
     }
 
     postUpdate() {
@@ -385,11 +461,12 @@ export abstract class ActorBase extends EntityBase {
         this.x = this.sprite.x
         this.y = this.sprite.y
         this.sprite.setDepth(this.y)
+        this.shadowSprite.setPosition(this.sprite.x, this.sprite.y + this.shadowOffset)
+        this.shadowSprite.setDepth(this.sprite.depth - 1)
     }
 }
 
 export abstract class UnitBase extends ActorBase {
-    shadowSprite!: Phaser.GameObjects.Sprite
     hurtTime: number = 0
     hurtDirX: number = 0
     hurtDirY: number = 0
@@ -401,10 +478,12 @@ export abstract class UnitBase extends ActorBase {
     get mapX() { return this.floor.fgLayer.getTileAtWorldXY(this.x, this.y, true).x }
     get mapY() { return this.floor.fgLayer.getTileAtWorldXY(this.x, this.y, true).y }
 
-    get isHurting() { return this.hurtTime > 0 }
+    get isInvulnerable() { return this.hurtTime > 0 }
 
     abstract get invulnPeriod(): number
-    abstract get movementType(): 'stationary' | 'hovering' | 'spinning' | 'directional'
+    abstract get movementType(): 'stationary' | 'hovering' | 'spinning' | 'directional' | 'boss'
+
+    get shadowOffset() { return this.movementType === 'stationary' ? -2 : 6 }
 
     constructor(floorIndex: number, x: number, y: number, public power: number, public maxPower: number = power) {
         super(floorIndex, x, y)
@@ -412,32 +491,24 @@ export abstract class UnitBase extends ActorBase {
 
     spawn(scene: Phaser.Scene) {
         super.spawn(scene)
-        this.shadowSprite = this.scene.add.sprite(this.x, this.y, 'drop-shadow')
         this.body.setSize(24, 24)
-    }
-
-    despawn() {
-        super.despawn()
-        this.shadowSprite = destroyComponent(this.shadowSprite)
     }
 
     update(t: number, dt: number) {
         super.update(t, dt)
         if (!this.active) return
         this.hurtTime -= dt
-        this.sprite.tint = this.isHurting && Math.sin(t * Math.PI * 16) > 0 ? 0xFF0000 : 0xFFFFFF
+        this.sprite.tint = this.hurtTime > 0 && Math.sin(t * Math.PI * 16) > 0 ? 0xFF0000 : 0xFFFFFF
     }
 
     postUpdate() {
         super.postUpdate()
         if (!this.active) return
-        this.shadowSprite.setPosition(this.sprite.x, this.sprite.y + (this.movementType === 'stationary' ? -2 : 6))
-        this.shadowSprite.setDepth(this.sprite.depth - 1)
         if (this.power <= 0 && !this.dead) this.die()
     }
 
     hurt(damage: number, inflictor: ActorBase) {
-        if (!this.isHurting && !this.dead) {
+        if (!this.isInvulnerable && !this.dead) {
             const dmg = Math.min(this.power, damage)
             if (dmg > 0) {
                 this.power -= dmg
@@ -556,10 +627,10 @@ export class Player extends UnitBase {
     }
 
     getTargetForInteract() {
-        const d = gameState.drones.filter(d => d.active && d.floorIndex === this.floorIndex && dist(this.sprite, d) < 20).sort((a, b) => dist(this.sprite, a) - dist(this.sprite, b))[0]
+        const d = gameState.drones.filter(d => d.active && d.isOnCurrentFloor && dist(this.sprite, d) < 20).sort((a, b) => dist(this.sprite, a) - dist(this.sprite, b))[0]
         if (d) return d
 
-        const i = gameState.interactibles.filter(i => i.active && i.floorIndex === this.floorIndex && dist(this.sprite, i) < 20).sort((a, b) => dist(this.sprite, a) - dist(this.sprite, b))[0]
+        const i = gameState.interactibles.filter(i => i.active && i.isOnCurrentFloor && dist(this.sprite, i) < 20).sort((a, b) => dist(this.sprite, a) - dist(this.sprite, b))[0]
         if (i) return i
 
         const s = this.schematics[this.schematicIndex]
@@ -580,7 +651,22 @@ export abstract class DroneLikeBase extends UnitBase {
 
     initialize() {
         super.initialize()
-        if (this.movementType === 'hovering' || this.movementType === 'directional') {
+        if (this.movementType === 'boss') {
+            this.scene.anims.create({ key: `drone-up-boss-invulnerable`, frames: this.scene.anims.generateFrameNumbers('boss-invulnerable', { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+            this.scene.anims.create({ key: `drone-right-boss-invulnerable`, frames: this.scene.anims.generateFrameNumbers('boss-invulnerable', { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+            this.scene.anims.create({ key: `drone-down-boss-invulnerable`, frames: this.scene.anims.generateFrameNumbers('boss-invulnerable', { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+            this.scene.anims.create({ key: `drone-left-boss-invulnerable`, frames: this.scene.anims.generateFrameNumbers('boss-invulnerable', { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+
+            this.scene.anims.create({ key: `drone-up-boss-vulnerable`, frames: this.scene.anims.generateFrameNumbers('boss-vulnerable', { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+            this.scene.anims.create({ key: `drone-right-boss-vulnerable`, frames: this.scene.anims.generateFrameNumbers('boss-vulnerable', { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+            this.scene.anims.create({ key: `drone-down-boss-vulnerable`, frames: this.scene.anims.generateFrameNumbers('boss-vulnerable', { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+            this.scene.anims.create({ key: `drone-left-boss-vulnerable`, frames: this.scene.anims.generateFrameNumbers('boss-vulnerable', { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+
+            this.scene.anims.create({ key: `drone-up-${this.attachSpriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.attachSpriteKey, { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+            this.scene.anims.create({ key: `drone-right-${this.attachSpriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.attachSpriteKey, { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+            this.scene.anims.create({ key: `drone-down-${this.attachSpriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.attachSpriteKey, { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+            this.scene.anims.create({ key: `drone-left-${this.attachSpriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.attachSpriteKey, { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
+        } else if (this.movementType === 'hovering' || this.movementType === 'directional') {
             this.scene.anims.create({ key: `drone-up-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 0, end: 3 }), frameRate: 5, repeat: -1 })
             this.scene.anims.create({ key: `drone-right-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 4, end: 7 }), frameRate: 5, repeat: -1 })
             this.scene.anims.create({ key: `drone-down-${this.spriteKey}`, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, { start: 8, end: 11 }), frameRate: 5, repeat: -1 })
@@ -695,7 +781,8 @@ export abstract class DroneBase extends DroneLikeBase {
 
     tick() {
         super.tick()
-        this.power--
+        if (!gameState.pylons.some(p => p.floorIndex === this.floorIndex && p.boss && p.isPowered))
+            this.power--
     }
 }
 
@@ -830,10 +917,11 @@ export abstract class EnemyBase extends DroneLikeBase {
     collider!: Phaser.Physics.Arcade.Collider
 
     get spriteKey() {
-        return this.movementType === 'hovering' ? 'enemy-core-hover' :
-            this.movementType === 'spinning' ? 'enemy-core-spin' :
-                this.movementType === 'directional' ? 'enemy-core-directional' :
-                    'enemy-core'
+        return this.movementType === 'boss' ? (this.isInvulnerable ? 'boss-invulnerable' : 'boss-vulnerable') :
+            this.movementType === 'hovering' ? 'enemy-core-hover' :
+                this.movementType === 'spinning' ? 'enemy-core-spin' :
+                    this.movementType === 'directional' ? 'enemy-core-directional' :
+                        'enemy-core'
     }
     get invulnPeriod() { return 0.25 }
 
@@ -870,6 +958,16 @@ export abstract class EnemyBase extends DroneLikeBase {
             gameState.drops.push(new DropPower(this.floorIndex, this.x, this.y, 10))
         }
         this.destroy()
+    }
+}
+
+export class EnemyBoss extends EnemyBase {
+    get movementType() { return 'boss' as const }
+    get attachSpriteKey() { return 'transparent' }
+    get isInvulnerable() { return this.hurtTime > 0 || !gameState.pylons.filter(p => p.floorIndex === this.floorIndex && p.boss).every(p => p.isPowered) }
+
+    constructor(floorIndex: number, x: number, y: number) {
+        super(floorIndex, x, y, 'down', 200, 15, bossSchematic)
     }
 }
 
@@ -1111,6 +1209,8 @@ export class EnemyDirectionalTurret extends EnemyBase {
 export abstract class DropBase extends ActorBase {
     collider!: Phaser.Physics.Arcade.Collider
 
+    get shadowOffset() { return 4 }
+
     spawn(scene: Phaser.Scene) {
         super.spawn(scene)
         gameState.dropGroup.add(this.sprite)
@@ -1182,6 +1282,8 @@ export class DropSchematic extends DropBase {
 
 export abstract class BulletBase extends ActorBase {
     collider!: Phaser.Physics.Arcade.Collider
+
+    get shadowOffset() { return 4 }
 
     constructor(floorIndex: number, x: number, y: number, public dx: number, public dy: number, public speed: number, public lifetime: number, public friendly: boolean) {
         super(floorIndex, x, y)
@@ -1300,7 +1402,8 @@ export abstract class InteractableBase extends ActorBase {
 export class InteractablePowerCore extends InteractableBase {
     power: number = 25
 
-    get spriteKey() { return 'destructible-power-core' }
+    get spriteKey() { return 'interactable-power-core' }
+    get shadowOffset() { return 4 }
     get actionText() {
         return gameState.player.power < gameState.player.maxPower ?
             `Cannot pick up power core (already at max power)` :
@@ -1320,6 +1423,7 @@ export class InteractablePowerCore extends InteractableBase {
 export class InteractableElevatorButton extends InteractableBase {
 
     get spriteKey() { return 'placeholder' }
+    get shadowOffset() { return 4 }
     get actionText() {
         return this.isValidOnFloor() ?
             `Take elevator ${this.delta === 1 ? 'down' : 'up'}` :
@@ -1351,6 +1455,35 @@ export class InteractableElevatorButton extends InteractableBase {
     }
 }
 
+export class Pylon extends ActorBase {
+    power: number = 0
+    maxPower: number = 9
+
+    get spriteKey() { return 'pylon' }
+    get shadowOffset() { return 8 }
+
+    get isPowered() { return this.power >= this.maxPower }
+
+    constructor(floorIndex: number, x: number, y: number, public boss: boolean) {
+        super(floorIndex, x, y)
+    }
+
+    update(t: number, dt: number) {
+        super.update(t, dt)
+        if (!this.active || gameState.player.floorIndex !== this.floorIndex) return
+        const dx = Math.abs(gameState.player.x - this.x)
+        const dy = Math.abs(gameState.player.y - this.y)
+        if (dx < 48 && dy < 48) {
+            this.power = Math.min(this.maxPower, this.power + dt * (this.boss ? 1 : 2))
+        }
+    }
+
+    postUpdate() {
+        super.postUpdate()
+        this.sprite.setFrame(Math.floor(this.power))
+    }
+}
+
 export class GameState {
     player: Player = new Player()
     drones: DroneBase[] = []
@@ -1358,6 +1491,8 @@ export class GameState {
     drops: DropBase[] = []
     bullets: BulletBase[] = []
     interactibles: InteractableBase[] = []
+    pylons: Pylon[] = []
+    elements: ElementBase[] = [new PlayerPowerBar(), new BossPowerBar()]
     floors: Floor[] = [new Floor(0)]
     floorIndex: number = 0
 
@@ -1377,7 +1512,7 @@ export class GameState {
 
     get floor() { return this.floors[this.floorIndex] }
 
-    get entities() { return [this.player, ...this.drones, ...this.enemies, ...this.drops, ...this.bullets, ...this.interactibles, ...this.floors] }
+    get entities() { return [this.player, ...this.drones, ...this.enemies, ...this.drops, ...this.bullets, ...this.interactibles, ...this.pylons, ...this.elements, ...this.floors] }
 }
 
 const gameState = new GameState()
@@ -1392,11 +1527,18 @@ export class GameplayScene extends Phaser.Scene {
     }
 
     preload() {
+        this.load.image('placeholder', 'assets/placeholder.png')
+        this.load.spritesheet('transparent', 'assets/Transparent.png', { frameWidth: 1 })
+        this.load.spritesheet('drop-shadow', 'assets/DropShadow.png', { frameWidth: 32 })
+
         this.load.image('tileset-blocks', 'assets/Test-BlockTile.png')
         this.load.image('tileset-tiles', 'assets/Test-Tiles.png')
         this.load.tilemapTiledJSON('tilemap', 'assets/Code-X.json')
-        this.load.image('placeholder', 'assets/placeholder.png')
+
         this.load.spritesheet('player', 'assets/Battery-Bot.png', { frameWidth: 32 })
+        this.load.spritesheet('boss-invulnerable', 'assets/Boss.png', { frameWidth: 64 })
+        this.load.spritesheet('boss-vulnerable', 'assets/Boss-Vulnerable.png', { frameWidth: 64 })
+
         this.load.spritesheet('drone-core', 'assets/Drone-Core.png', { frameWidth: 32 })
         this.load.spritesheet('drone-core-hover', 'assets/Drone-Core-Hovering.png', { frameWidth: 32 })
         this.load.spritesheet('drone-core-spin', 'assets/Drone-Core-Spinning.png', { frameWidth: 32 })
@@ -1405,6 +1547,7 @@ export class GameplayScene extends Phaser.Scene {
         this.load.spritesheet('drone-tracking', 'assets/Drone-Tracking-Stationary.png', { frameWidth: 32 })
         this.load.spritesheet('drone-punch-hover', 'assets/Drone-Punch-Hovering.png', { frameWidth: 32 })
         this.load.spritesheet('drone-boomerang-spin', 'assets/Drone-Boomerang.png', { frameWidth: 32 })
+
         this.load.spritesheet('enemy-core', 'assets/Enemy-Core-Stationary.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-gun', 'assets/Enemy-Gun-Stationary.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-multishot', 'assets/Enemy-Multishot-Stationary.png', { frameWidth: 32 })
@@ -1415,13 +1558,22 @@ export class GameplayScene extends Phaser.Scene {
         this.load.spritesheet('enemy-punch-hover', 'assets/Enemy-Punch-Hovering.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-multishot-hover', 'assets/Enemy-Multishot-Hovering.png', { frameWidth: 32 })
         this.load.spritesheet('enemy-boomerang-spin', 'assets/Enemy-Boomerang.png', { frameWidth: 32 })
-        this.load.spritesheet('power-bar', 'assets/Power-Bar.png', { frameWidth: 32 })
-        this.load.spritesheet('drop-shadow', 'assets/DropShadow.png', { frameWidth: 32 })
+
         this.load.spritesheet('pickup-energy', 'assets/Pickup-Energy.png', { frameWidth: 8 })
-        this.load.image('destructible-power-core', 'assets/Destructable-Powercore.png')
+
+        this.load.image('interactable-power-core', 'assets/Destructable-Powercore.png')
+
+        this.load.spritesheet('pylon', 'assets/Pylons.png', { frameWidth: 32, frameHeight: 40 })
+
         this.load.spritesheet('projectile-ally', 'assets/Projectile-Ally.png', { frameWidth: 32 })
         this.load.spritesheet('projectile-enemy', 'assets/Projectile-Enemy.png', { frameWidth: 32 })
         this.load.spritesheet('projectile-ally-tracking', 'assets/Projectile-Ally-Tracking.png', { frameWidth: 32 })
+
+        this.load.spritesheet('power-bar', 'assets/Power-Bar.png', { frameWidth: 32 })
+        this.load.spritesheet('power-bar-large', 'assets/Power-Bar-Large.png', { frameWidth: 16 })
+        this.load.spritesheet('power-bar-boss', 'assets/Power-Bar-Boss.png', { frameWidth: 16 })
+        this.load.spritesheet('power-bar-player', 'assets/Power-Bar-Player.png', { frameWidth: 16 })
+
         this.load.audio('music', 'assets/dire-space-emergency.mp3')
         this.load.audio('sound-bump', 'assets/bump.wav')
         this.load.audio('sound-damage', 'assets/damage.wav')
@@ -1435,9 +1587,10 @@ export class GameplayScene extends Phaser.Scene {
         gameState.enemyGroup = this.physics.add.group()
         gameState.dropGroup = this.physics.add.group()
         gameState.bulletGroup = this.physics.add.group()
-        this.text = this.add.text(0, 0, '', { color: 'white', backgroundColor: 'dimgray' })
+        this.text = this.add.text(0, 360, '', { color: 'white', backgroundColor: 'dimgray', fontFamily: 'sans-serif' })
         this.text.setDepth(9999)
         this.text.setScrollFactor(0, 0)
+        this.text.setOrigin(0, 1)
         gameState.music = this.sound.add('music')
         gameState.bumpSound = this.sound.add('sound-bump')
         gameState.damageSound = this.sound.add('sound-damage')
@@ -1446,8 +1599,8 @@ export class GameplayScene extends Phaser.Scene {
     }
 
     update(t: number, dt: number) {
-        for (const ent of gameState.entities.filter(e => e.floorIndex === gameState.floorIndex && !e.spawned)) ent.spawn(this)
-        for (const ent of gameState.entities.filter(e => e.floorIndex !== gameState.floorIndex && e.spawned)) ent.despawn()
+        for (const ent of gameState.entities.filter(e => e.isOnCurrentFloor && !e.spawned)) ent.spawn(this)
+        for (const ent of gameState.entities.filter(e => !e.isOnCurrentFloor && e.spawned)) ent.despawn()
         for (const ent of gameState.entities.filter(e => e.spawned && e.active)) ent.update(t / 1000, dt / 1000)
         for (const ent of gameState.entities.filter(e => e.spawned && e.active)) ent.postUpdate()
 
