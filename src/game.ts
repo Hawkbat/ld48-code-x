@@ -211,7 +211,7 @@ export class BossPowerBar extends PowerBarBase {
 
     get spriteKey() { return 'power-bar-boss' }
     get screenX() { return 640 / 2 - (this.target?.maxPower ?? 0) / 10 * 8 - 6 }
-    get screenY() { return 480 - 192 }
+    get screenY() { return 480 - 160 }
     get target() { return gameState.enemies.find(e => e.active && e.isOnCurrentFloor && e instanceof EnemyBoss && (!e.isInvulnerable || e.hurtTime > 0)) }
 }
 
@@ -1418,7 +1418,10 @@ export abstract class DropBase extends ActorBase {
         super.spawn(scene)
         gameState.dropGroup.add(this.sprite)
         this.collider = this.scene.physics.add.overlap(this.sprite, gameState.playerGroup, () => {
-            if (this.pickup()) this.destroy()
+            if (this.pickup()) {
+                gameState.powerUpSound.play(get3dSound(this))
+                this.destroy()
+            }
         }, undefined, this)
         this.collider.overlapOnly = true
     }
@@ -1460,7 +1463,6 @@ export class DropPower extends DropBase {
         if (gameState.player.power < gameState.player.maxPower) {
             const delta = Math.min(gameState.player.maxPower - gameState.player.power, this.power)
             gameState.player.power += delta
-            gameState.powerUpSound.play(get3dSound(this))
             return true
         }
     }
