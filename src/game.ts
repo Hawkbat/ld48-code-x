@@ -485,12 +485,14 @@ export class Floor extends EntityBase {
                 this.hasOpenedBossRoom = true
                 this.setVerticalDoor(11, 23, true)
                 this.setVerticalDoor(11, 24, true)
+                gameState.elements.push(new Alert(`The supervisor drone has activated!`))
             }
             const shouldOpenBossElevator = gameState.enemies.filter(p => p.floorIndex === this.floorIndex && p instanceof EnemyBoss).length === 0
             if (shouldOpenBossElevator && !this.hasOpenedBossElevator) {
                 this.hasOpenedBossElevator = true
                 this.setVerticalDoor(11, 7, true)
                 this.setVerticalDoor(11, 8, true)
+                gameState.elements.push(new Alert(`The supervisor drone was defeated!`))
             }
         }
         if (this.hasSpawnedObjects) {
@@ -506,7 +508,7 @@ export class Floor extends EntityBase {
     private spawnRoom(sx: number, sy: number) {
         const tiles = shuffle(this.getEmptyTiles(sx + 1, sy + 1, 8 - 2, 8 - 2))
         const powerCores = rand(0, 2)
-        let enemyBudget = rand(0, 3 + this.floorIndex) * 10
+        let enemyBudget = rand(0, 5 + this.floorIndex) * 5
         while (enemyBudget > 0 && tiles.length) {
             const { x, y } = tiles.pop()!
             const schematic = randItem(enemySchematics.filter(s => s.cost <= enemyBudget))
@@ -773,10 +775,19 @@ export class Player extends UnitBase {
             } else if (target instanceof InteractableBase) {
                 target.interact()
             } else if (target instanceof DroneSchematic) {
-                if (!gameState.pylons.some(p => p.floorIndex === this.floorIndex && p.boss && p.isPowered))
-                    this.power -= target.cost
-                const drone = target.create(this, target)
-                gameState.drones.push(drone)
+                if (gameState.drones.some(d => d.schematic === target)) {
+                    gameState.elements.push(new Alert(`Existing ${target.name} must be picked up before redeploying`))
+                } else {
+                    const noCost = gameState.pylons.some(p => p.floorIndex === this.floorIndex && p.boss && p.isPowered)
+                    if (noCost || this.power > target.cost) {
+                        if (!noCost)
+                            this.power -= target.cost
+                        const drone = target.create(this, target)
+                        gameState.drones.push(drone)
+                    } else {
+                        gameState.elements.push(new Alert(`Insufficient power to deploy ${target.name} drone`))
+                    }
+                }
             }
         }
         if (!gameState.keys.space.isDown && this.placing) this.placing = false
@@ -807,7 +818,7 @@ export class Player extends UnitBase {
         if (i) return i
 
         const s = this.schematics[this.schematicIndex]
-        if (s && this.power > s.cost && !gameState.drones.some(d => d.schematic === s)) return s
+        if (s) return s
     }
 }
 
@@ -1191,7 +1202,7 @@ export class EnemyBoss extends EnemyBase {
     get isInvulnerable() { return this.hurtTime > 0 || !gameState.pylons.filter(p => p.floorIndex === this.floorIndex && p.boss).every(p => p.isPowered) }
 
     constructor(floorIndex: number, x: number, y: number) {
-        super(floorIndex, x, y, 'down', 100, 10, bossSchematic)
+        super(floorIndex, x, y, 'down', 100 + Math.floor(floorIndex / 5) * 50, 10, bossSchematic)
     }
 
     spawn(scene: Phaser.Scene) {
@@ -1209,7 +1220,7 @@ export class EnemyBoss extends EnemyBase {
         }
         if (this.subtick === 16) {
             const pylonsActive = gameState.pylons.filter(p => p.floorIndex === this.floorIndex && p.boss && p.isPowered).length
-            let enemyBudget = rand(1, 1 + pylonsActive) * 10
+            let enemyBudget = (rand(1, 1 + pylonsActive) + Math.floor(this.floorIndex / 5)) * 10
             const tiles = this.floor.getEmptyTiles(this.mapX - 1, this.mapY - 1, 3, 3).filter(t => !gameState.enemies.some(e => e.floorIndex === this.floorIndex && e.mapX === t.tx && e.mapY === t.ty))
             while (enemyBudget > 0 && tiles.length) {
                 const { x, y } = tiles.pop()!
@@ -1665,7 +1676,7 @@ export abstract class InteractableBase extends ActorBase {
 }
 
 export class InteractablePowerCore extends InteractableBase {
-    power: number = 25
+    power: number = 20
 
     get spriteKey() { return 'interactable-power-core' }
     get shadowOffset() { return 4 }
@@ -1960,7 +1971,7 @@ export class GameplayScene extends Phaser.Scene {
             str = target.actionText
         }
         if (target instanceof DroneSchematic) {
-            str = `Place ${target.name} (-${target.cost} power)`
+            str = `Deploy ${target.name} (-${target.cost} power)`
         }
         return str ? `(Spacebar) ${str}` : ''
     }
