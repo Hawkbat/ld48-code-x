@@ -107,6 +107,8 @@ export abstract class EntityBase {
     get isOnCurrentFloor() {
         return this.floorIndex === gameState.player.floorIndex
     }
+    get floorNumber() { return this.floorIndex % 5 }
+    get sectionNumber() { return Math.floor(this.floorIndex / 5) }
 
     initialize() {
         this.initialized = true
@@ -356,7 +358,6 @@ export class Floor extends EntityBase {
     get hasRoomDownLeft() { return this.roomDownLeftType >= 0 }
     get hasRoomCenterLeft() { return this.roomCenterLeftType >= 0 }
 
-    get floorNumber() { return this.floorIndex % 5 }
     get isTopFloor() { return this.floorNumber === 0 }
     get isBossFloor() { return this.floorNumber === 4 }
 
@@ -392,21 +393,12 @@ export class Floor extends EntityBase {
         this.fgLayer.setDepth(-9000)
         this.fgLayer.setCollisionByExclusion([-1])
 
-        // Elevator floor indicators
-        this.setTile(9, 32, 32 * this.floorNumber + 6)
-        this.setTile(10, 32, 32 * this.floorNumber + 7)
-        this.setTile(13, 32, 32 * this.floorNumber + 4)
-        this.setTile(14, 32, 32 * this.floorNumber + 5)
-
-        // Elevator buttons
-        this.setTile(9, 33, null, this.isBossFloor ? 194 : 192)
-        this.setTile(10, 33, null, this.isBossFloor ? 195 : 193)
-        this.setTile(13, 33, null, this.isTopFloor ? 194 : 192)
-        this.setTile(14, 33, null, this.isTopFloor ? 195 : 193)
+        this.setElevator(8, 32, this.floorNumber, this.sectionNumber, this.isTopFloor, this.isBossFloor)
 
         // Boss rooms
         if (this.isBossFloor) {
             this.copyRect(0, 92, 4, 0, 16, 32)
+            this.setElevator(8, 0, 0, this.sectionNumber + 1, true, false)
         } else {
             this.clearRect(0, 0, 24, 32)
         }
@@ -560,6 +552,34 @@ export class Floor extends EntityBase {
         this.setTile(dx + 1, dy + 0, open ? -1 : 165, open ? 161 : -1)
     }
 
+    private setElevator(dx: number, dy: number, floor: number, section: number, isTopFloor: boolean, isBossFloor: boolean) {
+        this.setElevatorFloorIndicators(dx, dy, floor)
+        this.setElevatorButtons(dx, dy, isTopFloor, isBossFloor)
+        this.setElevatorFloor(dx, dy, section)
+    }
+
+    private setElevatorFloorIndicators(dx: number, dy: number, floor: number) {
+        this.setTile(dx + 1, dy, 32 * floor + 6)
+        this.setTile(dx + 2, dy, 32 * floor + 7)
+        this.setTile(dx + 5, dy, 32 * floor + 4)
+        this.setTile(dx + 6, dy, 32 * floor + 5)
+    }
+
+    private setElevatorButtons(dx: number, dy: number, isTopFloor: boolean, isBossFloor: boolean) {
+        this.setTile(dx + 1, dy + 1, null, isBossFloor ? 194 : 192)
+        this.setTile(dx + 2, dy + 1, null, isBossFloor ? 195 : 193)
+        this.setTile(dx + 5, dy + 1, null, isTopFloor ? 194 : 192)
+        this.setTile(dx + 6, dy + 1, null, isTopFloor ? 195 : 193)
+    }
+
+    private setElevatorFloor(dx: number, dy: number, section: number) {
+        const index = [256, 320, 384, 258, 322][Math.min(section, 4)]
+
+        this.setTile(dx + 3, dy + 3, null, index + 0)
+        this.setTile(dx + 4, dy + 3, null, index + 1)
+        this.setTile(dx + 3, dy + 4, null, index + 32 + 0)
+        this.setTile(dx + 4, dy + 4, null, index + 32 + 1)
+    }
 
     private copyRoom(sx: number, sy: number, dx: number, dy: number) {
         return this.copyRect(sx, sy, dx, dy, 8, 8)
@@ -1202,7 +1222,8 @@ export class EnemyBoss extends EnemyBase {
     get isInvulnerable() { return this.hurtTime > 0 || !gameState.pylons.filter(p => p.floorIndex === this.floorIndex && p.boss).every(p => p.isPowered) }
 
     constructor(floorIndex: number, x: number, y: number) {
-        super(floorIndex, x, y, 'down', 100 + Math.floor(floorIndex / 5) * 50, 10, bossSchematic)
+        super(floorIndex, x, y, 'down', 100, 10, bossSchematic)
+        this.power = this.maxPower = 100 + this.sectionNumber * 50
     }
 
     spawn(scene: Phaser.Scene) {
@@ -1220,7 +1241,7 @@ export class EnemyBoss extends EnemyBase {
         }
         if (this.subtick === 16) {
             const pylonsActive = gameState.pylons.filter(p => p.floorIndex === this.floorIndex && p.boss && p.isPowered).length
-            let enemyBudget = (rand(1, 1 + pylonsActive) + Math.floor(this.floorIndex / 5)) * 10
+            let enemyBudget = (rand(1, 1 + pylonsActive) + this.sectionNumber) * 10
             const tiles = this.floor.getEmptyTiles(this.mapX - 1, this.mapY - 1, 3, 3).filter(t => !gameState.enemies.some(e => e.floorIndex === this.floorIndex && e.mapX === t.tx && e.mapY === t.ty))
             while (enemyBudget > 0 && tiles.length) {
                 const { x, y } = tiles.pop()!
