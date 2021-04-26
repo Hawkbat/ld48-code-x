@@ -1851,6 +1851,9 @@ export class Pylon extends ActorBase {
                 this.power = Math.min(this.maxPower, this.power + 1)
                 if (this.power === this.maxPower) {
                     gameState.powerUpSound.play(get3dSound(this))
+                    if (this.boss && gameState.pylons.filter(p => p.floorIndex === this.floorIndex && p.boss && p.isPowered).length === 1) {
+                        gameState.elements.push(new Alert('Power Surge! Drones have no power cost!'))
+                    }
                 } else {
                     gameState.clickSound.play(get3dSound(this))
                 }
