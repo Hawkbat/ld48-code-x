@@ -79,6 +79,7 @@ export const droneSchematics = [
     new DroneSchematic('Boomerang', 15, IconType.boomerang, (p, s) => new DroneSpinBoomerang(p.floorIndex, p.x, p.y, p.facing, s)),
     new DroneSchematic('Tracker', 15, IconType.tracking, (p, s) => new DroneTracker(p.floorIndex, p.x, p.y, p.facing, s)),
     new DroneSchematic('Strafer', 15, IconType.directionalGun, (p, s) => new DroneDirectionalGun(p.floorIndex, p.x, p.y, p.facing, s)),
+    new DroneSchematic('Multishot', 20, IconType.multishot, (p, s) => new DroneMultishot(p.floorIndex, p.x, p.y, p.facing, s)),
 ]
 
 export class EnemySchematic {
@@ -1214,6 +1215,34 @@ export class DroneDirectionalGun extends DroneBase {
     }
 }
 
+export class DroneMultishot extends DroneBase {
+    subtick: number = 0
+    get movementType() { return 'stationary' as const }
+    get attachSpriteKey() { return 'drone-multishot' }
+
+    constructor(floorIndex: number, x: number, y: number, facing: Facing4Way, schematic: DroneSchematic) {
+        super(floorIndex, x, y, facing, 5, schematic)
+    }
+
+    tick() {
+        super.tick()
+        if (this.subtick === 0) {
+
+        } else if (this.subtick === 1) {
+            const dx = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
+            const dy = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
+
+            const ox = this.facing === 'up' ? -1 : this.facing === 'down' ? 1 : 0
+            const oy = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : 0
+
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 8, this.y + dy * 8, dx + ox, dy + oy, 256, 2, true, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 8, this.y + dy * 8, dx, dy, 256, 2, true, 5))
+            gameState.bullets.push(new BulletPulse(this.floorIndex, this.x + dx * 8, this.y + dy * 8, dx - ox, dy - oy, 256, 2, true, 5))
+        }
+        this.subtick = (this.subtick + 1) % 2
+    }
+}
+
 export abstract class EnemyBase extends DroneLikeBase {
     collider!: Phaser.Physics.Arcade.Collider
 
@@ -2097,6 +2126,7 @@ export class GameplayScene extends SceneBase {
         this.load.spritesheet('drone-core-directional', 'assets/Drone-Core-Directional.png', { frameWidth: 32 })
         this.load.spritesheet('drone-gun', 'assets/Drone_Gun.png', { frameWidth: 32 })
         this.load.spritesheet('drone-tracking', 'assets/Drone-Tracking-Stationary.png', { frameWidth: 32 })
+        this.load.spritesheet('drone-multishot', 'assets/Drone-Multishot-Stationary.png', { frameWidth: 32 })
         this.load.spritesheet('drone-gun-hover', 'assets/Drone_Gun-Hovering.png', { frameWidth: 32 })
         this.load.spritesheet('drone-punch-hover', 'assets/Drone-Punch-Hovering.png', { frameWidth: 32 })
         this.load.spritesheet('drone-boomerang-spin', 'assets/Drone-Boomerang.png', { frameWidth: 32 })
