@@ -32,19 +32,23 @@ window.onerror = (msg, src, line, col, err) => {
     console.error(err)
 }
 
-function rand(max: number, min: number = 0) {
+function randInt(max: number, min: number = 0) {
     return min + Math.floor((max + 1 - min) * Math.random())
+}
+
+function randFloat(max: number = 1, min: number = 0) {
+    return min + (max + 1 - min) * Math.random()
 }
 
 function randItem<T>(array: T[]): T | null {
     if (array.length === 0) return null
-    return array[rand(array.length - 1)]
+    return array[randInt(array.length - 1)]
 }
 
 function shuffle<T>(array: T[]): T[] {
     const a = [...array]
     for (let i = a.length - 1; i > 0; i--) {
-        const j = rand(i);
+        const j = randInt(i);
         [a[i], a[j]] = [a[j], a[i]]
     }
     return a
@@ -143,8 +147,6 @@ export abstract class EntityBase {
 }
 
 export abstract class ElementBase extends EntityBase {
-    abstract get screenX(): number
-    abstract get screenY(): number
 
     get isOnCurrentFloor() { return true }
 
@@ -165,6 +167,8 @@ export abstract class PowerBarBase extends ElementBase {
 
     abstract get spriteKey(): string
     abstract get target(): UnitBase | undefined
+    abstract get screenX(): number
+    abstract get screenY(): number
 
     despawn() {
         super.despawn()
@@ -322,6 +326,39 @@ export class Alert extends ElementBase {
         this.lifetime -= dt
         if (this.lifetime < 1) this.text.setAlpha(this.lifetime)
         if (this.lifetime < 0) this.destroy()
+    }
+}
+
+export class Explosion extends ElementBase {
+    sprite!: Phaser.GameObjects.Sprite
+    lifetime: number = 7 / 10
+
+    constructor(public x: number, public y: number) {
+        super()
+    }
+
+    initialize() {
+        super.initialize()
+        this.scene.anims.create({ key: 'explosion', frames: this.scene.anims.generateFrameNumbers('explosion', {}), frameRate: 10, repeat: 0 })
+    }
+
+    spawn(scene: Phaser.Scene) {
+        super.spawn(scene)
+        this.sprite = this.scene.add.sprite(this.x, this.y, 'explosion')
+        this.sprite.setDepth(8000)
+        this.sprite.anims.play('explosion')
+        gameState.explosionSound.play(get3dSound(this))
+    }
+
+    despawn() {
+        super.despawn()
+        this.sprite = destroyComponent(this.sprite)
+    }
+
+    update(t: number, dt: number) {
+        super.update(t, dt)
+        this.lifetime -= dt
+        if (this.lifetime <= 0) this.destroy()
     }
 }
 
@@ -510,8 +547,8 @@ export class Floor extends EntityBase {
 
     private spawnRoom(sx: number, sy: number) {
         const tiles = shuffle(this.getEmptyTiles(sx + 1, sy + 1, 8 - 2, 8 - 2))
-        const powerCores = rand(0, 2)
-        let enemyBudget = rand(0, 5 + this.floorIndex) * 5
+        const powerCores = randInt(0, 2)
+        let enemyBudget = randInt(0, 5 + this.floorIndex) * 5
         while (enemyBudget > 0 && tiles.length) {
             const { x, y } = tiles.pop()!
             const schematic = randItem(enemySchematics.filter(s => s.cost <= enemyBudget))
@@ -629,7 +666,7 @@ export class Floor extends EntityBase {
     }
 
     private randomRoomType() {
-        return !this.isBossFloor && Math.random() < (0.25 + 0.2 * this.floorNumber) ? rand(3) : -1
+        return !this.isBossFloor && Math.random() < (0.25 + 0.2 * this.floorNumber) ? randInt(3) : -1
     }
 }
 
@@ -741,7 +778,7 @@ export class Player extends UnitBase {
     get invulnPeriod() { return 1 }
 
     constructor() {
-        super(0, 0, 0, 100, 100)
+        super(4, 0, 0, 100, 100)
     }
 
     initialize() {
@@ -1213,9 +1250,10 @@ export abstract class EnemyBase extends DroneLikeBase {
         gameState.enemies.splice(gameState.enemies.indexOf(this), 1)
     }
 
-    die(skipPickups?: boolean) {
+    die(skipDefaultBehavior?: boolean) {
         super.die()
-        if (!skipPickups) {
+        gameState.score.enemiesKilled++
+        if (!skipDefaultBehavior) {
             const canDropKey = !this.floor.hasFoundElevatorKey && !this.floor.hasUnlockedElevator && !this.floor.isBossFloor && !gameState.drops.some(d => d.floorIndex === this.floorIndex && d instanceof DropKey)
 
             if (canDropKey && Math.random() < 0.1) {
@@ -1226,9 +1264,9 @@ export abstract class EnemyBase extends DroneLikeBase {
             } else {
                 gameState.drops.push(new DropPower(this.floorIndex, this.x, this.y, 10))
             }
+            gameState.elements.push(new Explosion(this.x, this.y))
+            this.destroy()
         }
-        gameState.score.enemiesKilled++
-        this.destroy()
     }
 }
 
@@ -1251,15 +1289,15 @@ export class EnemyBoss extends EnemyBase {
 
     tick() {
         super.tick()
-        if (!this.active || !this.floor.hasOpenedBossRoom) return
+        if (!this.active || !this.floor.hasOpenedBossRoom || this.power === 0) return
         if ((this.subtick % 4) === 0) {
-            this.body.setVelocity(rand(1, -1) * 64, rand(1, -1) * 64)
+            this.body.setVelocity(randInt(1, -1) * 64, randInt(1, -1) * 64)
         } else {
             this.body.setVelocity(0, 0)
         }
         if (this.subtick === 16) {
             const pylonsActive = gameState.pylons.filter(p => p.floorIndex === this.floorIndex && p.boss && p.isPowered).length
-            let enemyBudget = (rand(1, 1 + pylonsActive) + this.sectionNumber) * 10
+            let enemyBudget = (randInt(1, 1 + pylonsActive) + this.sectionNumber) * 10
             const tiles = this.floor.getEmptyTiles(this.mapX - 1, this.mapY - 1, 3, 3).filter(t => !gameState.enemies.some(e => e.floorIndex === this.floorIndex && e.mapX === t.tx && e.mapY === t.ty))
             while (enemyBudget > 0 && tiles.length) {
                 const { x, y } = tiles.pop()!
@@ -1276,12 +1314,22 @@ export class EnemyBoss extends EnemyBase {
 
     die() {
         super.die(true)
-        for (const e of gameState.enemies.filter(e => e.floorIndex === this.floorIndex)) e.power = 0
-        gameState.score.bossesDefeated++
-        if (gameState.score.bossesDefeated >= 5) {
-            gameState.score.won = true
-            this.scene.scene.start('gameover')
+        const explosionSteps = 8
+        const explosionDelay = 0.125 * 1000
+        for (let i = 0; i < explosionSteps; i++) {
+            setTimeout(() => {
+                gameState.elements.push(new Explosion(randFloat(this.x + 24, this.x - 24), randFloat(this.y + 24, this.y - 24)))
+            }, i * explosionDelay)
         }
+        setTimeout(() => {
+            for (const e of gameState.enemies.filter(e => e.floorIndex === this.floorIndex)) e.power = 0
+            gameState.score.bossesDefeated++
+            this.destroy()
+            if (gameState.score.bossesDefeated >= 5) {
+                gameState.score.won = true
+                this.scene.scene.start('gameover')
+            }
+        }, explosionSteps * explosionDelay)
     }
 }
 
@@ -1902,6 +1950,7 @@ export class GameState {
     powerUpSound!: Phaser.Sound.BaseSound
     clickSound!: Phaser.Sound.BaseSound
     elevatorSound!: Phaser.Sound.BaseSound
+    explosionSound!: Phaser.Sound.BaseSound
 
     keys!: {
         w: Phaser.Input.Keyboard.Key,
@@ -2032,6 +2081,7 @@ export class GameplayScene extends SceneBase {
         this.load.image('placeholder', 'assets/placeholder.png')
         this.load.spritesheet('transparent', 'assets/Transparent.png', { frameWidth: 1 })
         this.load.spritesheet('drop-shadow', 'assets/DropShadow.png', { frameWidth: 32 })
+        this.load.spritesheet('explosion', 'assets/Explosion.png', { frameWidth: 32 })
 
         this.load.image('tileset-blocks', 'assets/Test-BlockTile.png')
         this.load.image('tileset-tiles', 'assets/Test-Tiles.png')
@@ -2090,6 +2140,7 @@ export class GameplayScene extends SceneBase {
         this.load.audio('sound-power-up', 'assets/powerUp.wav')
         this.load.audio('sound-click', 'assets/click.wav')
         this.load.audio('sound-elevator', 'assets/elevator.wav')
+        this.load.audio('sound-explosion', 'assets/explosion.wav')
     }
 
     create() {
@@ -2110,6 +2161,7 @@ export class GameplayScene extends SceneBase {
         gameState.powerUpSound = this.sound.add('sound-power-up')
         gameState.clickSound = this.sound.add('sound-click')
         gameState.elevatorSound = this.sound.add('sound-elevator')
+        gameState.explosionSound = this.sound.add('sound-explosion')
 
         gameState.keys = {
             w: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
