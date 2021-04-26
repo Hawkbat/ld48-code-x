@@ -9,6 +9,19 @@ type Facing8Way = 'center-center' | 'up-left' | 'up-center' | 'up-right' | 'cent
 const FACING_4WAY: Facing4Way[] = ['up', 'right', 'down', 'left']
 const FACING_8WAY: Facing8Way[] = ['up-left', 'up-center', 'up-right', 'center-right', 'down-right', 'down-center', 'down-left', 'center-left']
 
+enum IconType {
+    gun = 0,
+    multishot = 1,
+    tracking = 2,
+    punch = 3,
+    boomerang = 4,
+    directionalGun = 5,
+    directionalMulti = 6,
+    directionlTracking = 7,
+
+    length,
+}
+
 window.onerror = (msg, src, line, col, err) => {
     if (!DEBUG) {
         alert(`Please screenshot this and report it!\n${msg}\nin ${src}:(${line},${col})`)
@@ -48,17 +61,17 @@ function destroyComponent<T extends { destroy(): void }>(c: T): T {
 }
 
 export class DroneSchematic {
-    constructor(public name: string, public cost: number, public create: (creator: Player, schematic: DroneSchematic) => DroneBase) {
+    constructor(public name: string, public cost: number, public icon: IconType, public create: (creator: Player, schematic: DroneSchematic) => DroneBase) {
 
     }
 }
 
 export const droneSchematics = [
-    new DroneSchematic('Turret', 10, (p, s) => new DroneGun(p.floorIndex, p.x, p.y, p.facing, s)),
-    new DroneSchematic('Puncher', 15, (p, s) => new DroneHoverPunch(p.floorIndex, p.x, p.y, p.facing, s)),
-    new DroneSchematic('Boomerang', 15, (p, s) => new DroneSpinBoomerang(p.floorIndex, p.x, p.y, p.facing, s)),
-    new DroneSchematic('Tracker', 15, (p, s) => new DroneTracker(p.floorIndex, p.x, p.y, p.facing, s)),
-    new DroneSchematic('Strafer', 15, (p, s) => new DroneDirectionalGun(p.floorIndex, p.x, p.y, p.facing, s)),
+    new DroneSchematic('Turret', 10, IconType.gun, (p, s) => new DroneGun(p.floorIndex, p.x, p.y, p.facing, s)),
+    new DroneSchematic('Puncher', 15, IconType.punch, (p, s) => new DroneHoverPunch(p.floorIndex, p.x, p.y, p.facing, s)),
+    new DroneSchematic('Boomerang', 15, IconType.boomerang, (p, s) => new DroneSpinBoomerang(p.floorIndex, p.x, p.y, p.facing, s)),
+    new DroneSchematic('Tracker', 15, IconType.tracking, (p, s) => new DroneTracker(p.floorIndex, p.x, p.y, p.facing, s)),
+    new DroneSchematic('Strafer', 15, IconType.directionalGun, (p, s) => new DroneDirectionalGun(p.floorIndex, p.x, p.y, p.facing, s)),
 ]
 
 export class EnemySchematic {
@@ -127,6 +140,10 @@ export abstract class EntityBase {
 export abstract class ElementBase extends EntityBase {
     abstract get screenX(): number
     abstract get screenY(): number
+
+    constructor() {
+        super(-1)
+    }
 }
 
 export abstract class PowerBarBase extends ElementBase {
@@ -136,10 +153,6 @@ export abstract class PowerBarBase extends ElementBase {
 
     abstract get spriteKey(): string
     abstract get target(): UnitBase | undefined
-
-    constructor() {
-        super(-1)
-    }
 
     despawn() {
         super.despawn()
@@ -167,11 +180,31 @@ export abstract class PowerBarBase extends ElementBase {
 }
 
 export class PlayerPowerBar extends PowerBarBase {
+    text!: Phaser.GameObjects.Text
 
     get spriteKey() { return 'power-bar-player' }
     get screenX() { return 0 }
     get screenY() { return 0 }
     get target() { return gameState.player }
+
+    spawn(scene: Phaser.Scene) {
+        super.spawn(scene)
+        this.text = this.scene.add.text(this.screenX + 4, this.screenY + 12, '', { color: 'white', fontSize: '12px', fontFamily: 'sans-serif' })
+        this.text.setDepth(9999)
+        this.text.setScrollFactor(0, 0)
+        this.text.setOrigin(0, 0)
+    }
+
+    despawn() {
+        super.despawn()
+        this.text = destroyComponent(this.text)
+    }
+
+    postUpdate() {
+        super.postUpdate()
+        if (!this.active) return
+        this.text.setText(`Power: ${this.target.power} / ${this.target?.maxPower}`)
+    }
 }
 
 export class BossPowerBar extends PowerBarBase {
@@ -180,6 +213,66 @@ export class BossPowerBar extends PowerBarBase {
     get screenX() { return 640 / 2 - (this.target?.maxPower ?? 0) / 10 * 8 - 6 }
     get screenY() { return 480 - 192 }
     get target() { return gameState.enemies.find(e => e.active && e.isOnCurrentFloor && e instanceof EnemyBoss && (!e.isInvulnerable || e.hurtTime > 0)) }
+}
+
+export class SchematicList extends ElementBase {
+    text!: Phaser.GameObjects.Text
+    boxSprites: Phaser.GameObjects.Sprite[] = []
+    iconSprites: Phaser.GameObjects.Sprite[] = []
+
+    get screenX() { return 4 }
+    get screenY() { return 44 }
+    get isOnCurrentFloor() { return true }
+
+    spawn(scene: Phaser.Scene) {
+        super.spawn(scene)
+        this.text = this.scene.add.text(this.screenX, this.screenY + 16, '', { color: 'white', fontSize: '12px', fontFamily: 'sans-serif' })
+        this.text.setDepth(9999)
+        this.text.setScrollFactor(0, 0)
+        this.text.setOrigin(0, 0)
+    }
+
+    despawn() {
+        super.despawn()
+        this.text = destroyComponent(this.text)
+        while (this.boxSprites.length) destroyComponent(this.boxSprites.pop()!)
+        while (this.iconSprites.length) destroyComponent(this.iconSprites.pop()!)
+    }
+
+    postUpdate() {
+        super.postUpdate()
+        if (!this.active) return
+        const count = gameState.player.schematics.length
+        while (this.boxSprites.length > count) destroyComponent(this.boxSprites.pop()!)
+        while (this.iconSprites.length > count) destroyComponent(this.iconSprites.pop()!)
+        for (let i = 0; i < count; i++) {
+            while (this.boxSprites.length <= i)
+                this.boxSprites.push(this.scene.add.sprite(0, 0, 'ui-schematic-box'))
+            while (this.iconSprites.length <= i)
+                this.iconSprites.push(this.scene.add.sprite(0, 0, 'ui-schematic-icon'))
+
+            this.boxSprites[i].setDepth(9998)
+            this.boxSprites[i].setScrollFactor(0, 0)
+
+            this.iconSprites[i].setDepth(9998)
+            this.iconSprites[i].setScrollFactor(0, 0)
+
+            this.boxSprites[i].setPosition(this.screenX + 16 + 36 * i, this.screenY)
+            this.iconSprites[i].setPosition(this.screenX + 16 + 36 * i, this.screenY)
+
+            this.boxSprites[i].setFrame(i === gameState.player.schematicIndex ? 0 : 1)
+
+            const s = gameState.player.schematics[i]
+            if (s) {
+                const deployed = gameState.drones.some(d => d.schematic === s)
+                const canAfford = gameState.player.power > s.cost
+                const row = deployed ? 2 : canAfford ? 0 : 1
+                this.iconSprites[i].setFrame(IconType.length * row + s.icon)
+            }
+            this.iconSprites[i].setVisible(!!s)
+        }
+        this.text.setText(gameState.player.schematics[gameState.player.schematicIndex]?.name ?? '')
+    }
 }
 
 export class Floor extends EntityBase {
@@ -588,14 +681,14 @@ export class Player extends UnitBase {
     update(t: number, dt: number) {
         super.update(t, dt)
         if (!this.active || this.dead) return
-        const cursors = this.scene.input.keyboard.createCursorKeys()
         const speed = 128
         let vx = 0
         let vy = 0
-        if (cursors.left.isDown) vx -= 1
-        if (cursors.right.isDown) vx += 1
-        if (cursors.up.isDown) vy -= 1
-        if (cursors.down.isDown) vy += 1
+
+        if (gameState.keys.a.isDown || gameState.keys.left.isDown) vx -= 1
+        if (gameState.keys.d.isDown || gameState.keys.right.isDown) vx += 1
+        if (gameState.keys.w.isDown || gameState.keys.up.isDown) vy -= 1
+        if (gameState.keys.s.isDown || gameState.keys.down.isDown) vy += 1
         if (vx !== 0 && vy !== 0) {
             vx *= Math.sqrt(0.5)
             vy *= Math.sqrt(0.5)
@@ -612,7 +705,7 @@ export class Player extends UnitBase {
         }
         this.body.setVelocity(vx * speed, vy * speed)
 
-        if (cursors.space.isDown && !this.placing) {
+        if (gameState.keys.space.isDown && !this.placing) {
             this.placing = true
 
             const target = this.getTargetForInteract()
@@ -630,13 +723,13 @@ export class Player extends UnitBase {
                 gameState.drones.push(drone)
             }
         }
-        if (!cursors.space.isDown && this.placing) this.placing = false
+        if (!gameState.keys.space.isDown && this.placing) this.placing = false
 
-        if (cursors.shift.isDown && !this.swapping) {
+        if ((gameState.keys.shift.isDown || gameState.keys.tab.isDown) && !this.swapping) {
             this.swapping = true
             this.schematicIndex = (this.schematicIndex + 1) % this.schematics.length
         }
-        if (!cursors.shift.isDown && this.swapping) this.swapping = false
+        if (!(gameState.keys.shift.isDown || gameState.keys.tab.isDown) && this.swapping) this.swapping = false
     }
 
     postUpdate() {
@@ -1519,8 +1612,8 @@ export class InteractablePowerCore extends InteractableBase {
     get shadowOffset() { return 4 }
     get actionText() {
         return gameState.player.power < gameState.player.maxPower ?
-            `Cannot pick up power core (already at max power)` :
-            `Pick up power core (+${this.power} power)`
+            `Pick up power core (+${this.power} power)` :
+            `Cannot pick up power core (already at max power)`
     }
 
     interact() {
@@ -1558,6 +1651,7 @@ export class InteractableElevatorButton extends InteractableBase {
     interact() {
         if (this.isValidOnFloor() && this.isUnlocked()) {
             gameState.player.floorIndex += this.delta
+            for (const d of gameState.drones) d.destroy()
             gameState.player.sprite.setPosition(0, 0)
         }
     }
@@ -1633,7 +1727,7 @@ export class GameState {
     bullets: BulletBase[] = []
     interactibles: InteractableBase[] = []
     pylons: Pylon[] = []
-    elements: ElementBase[] = [new PlayerPowerBar(), new BossPowerBar()]
+    elements: ElementBase[] = [new PlayerPowerBar(), new BossPowerBar(), new SchematicList()]
     floors: Floor[] = []
 
     tickRate: number = 0.5
@@ -1651,6 +1745,20 @@ export class GameState {
     shootSound!: Phaser.Sound.BaseSound
     powerUpSound!: Phaser.Sound.BaseSound
     clickSound!: Phaser.Sound.BaseSound
+
+    keys!: {
+        w: Phaser.Input.Keyboard.Key,
+        a: Phaser.Input.Keyboard.Key,
+        s: Phaser.Input.Keyboard.Key,
+        d: Phaser.Input.Keyboard.Key,
+        left: Phaser.Input.Keyboard.Key,
+        right: Phaser.Input.Keyboard.Key,
+        up: Phaser.Input.Keyboard.Key,
+        down: Phaser.Input.Keyboard.Key,
+        space: Phaser.Input.Keyboard.Key,
+        shift: Phaser.Input.Keyboard.Key,
+        tab: Phaser.Input.Keyboard.Key,
+    }
 
     get floor() { return this.floors[this.player.floorIndex] }
 
@@ -1718,6 +1826,8 @@ export class GameplayScene extends Phaser.Scene {
         this.load.spritesheet('power-bar-large', 'assets/Power-Bar-Large.png', { frameWidth: 16 })
         this.load.spritesheet('power-bar-boss', 'assets/Power-Bar-Boss.png', { frameWidth: 16 })
         this.load.spritesheet('power-bar-player', 'assets/Power-Bar-Player.png', { frameWidth: 16 })
+        this.load.spritesheet('ui-schematic-box', 'assets/UI-SelectedGun.png', { frameWidth: 32 })
+        this.load.spritesheet('ui-schematic-icon', 'assets/UI-GunIcons.png', { frameWidth: 32 })
 
         this.load.audio('music-normal', 'assets/dire-space-emergency.mp3')
         this.load.audio('music-boss', 'assets/chipstep.mp3')
@@ -1735,7 +1845,7 @@ export class GameplayScene extends Phaser.Scene {
         gameState.enemyGroup = this.physics.add.group()
         gameState.dropGroup = this.physics.add.group()
         gameState.bulletGroup = this.physics.add.group()
-        this.text = this.add.text(0, 360, '', { color: 'white', backgroundColor: 'dimgray', fontFamily: 'sans-serif' })
+        this.text = this.add.text(0, 360, '', { color: 'white', fontSize: '12px', fontFamily: 'sans-serif' })
         this.text.setDepth(9999)
         this.text.setScrollFactor(0, 0)
         this.text.setOrigin(0, 1)
@@ -1746,6 +1856,20 @@ export class GameplayScene extends Phaser.Scene {
         gameState.shootSound = this.sound.add('sound-shoot')
         gameState.powerUpSound = this.sound.add('sound-power-up')
         gameState.clickSound = this.sound.add('sound-click')
+
+        gameState.keys = {
+            w: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
+            a: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),
+            s: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),
+            d: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),
+            left: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT),
+            right: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
+            up: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.UP),
+            down: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN),
+            space: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
+            shift: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
+            tab: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TAB),
+        }
     }
 
     update(t: number, dt: number) {
@@ -1755,11 +1879,7 @@ export class GameplayScene extends Phaser.Scene {
         for (const ent of gameState.entities.filter(e => e.spawned && e.active)) ent.update(t / 1000, dt / 1000)
         for (const ent of gameState.entities.filter(e => e.spawned && e.active)) ent.postUpdate()
 
-        this.text.setText(`Power: ${gameState.player.power}/${gameState.player.maxPower}\nSchematics (shift): ${gameState.player.schematics.map((s, i) => {
-            let str = s ? `${s.name}:${s.cost}` : `empty`
-            if (i === gameState.player.schematicIndex) str = `(${str})`
-            return str
-        }).join(' ')}\n${this.getContextTargetText()}`.trim())
+        this.text.setText(`${this.getContextTargetText()}\n(WASD/Arrow Keys) move | (Shift/Tab) cycle drones`.trim())
 
         const tick = Math.floor(t / gameState.tickRate) * gameState.tickRate
         if (t / gameState.tickRate >= tick && t - dt <= tick) {
@@ -1783,7 +1903,7 @@ export class GameplayScene extends Phaser.Scene {
         if (target instanceof DroneSchematic) {
             str = `Place ${target.name} (-${target.cost} power)`
         }
-        return str ? `(space) ${str}` : ''
+        return str ? `(Spacebar) ${str}` : ''
     }
 }
 
