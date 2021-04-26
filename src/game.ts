@@ -3,6 +3,9 @@ import { Scene } from 'phaser'
 
 const DEBUG = false
 
+const SCREEN_WIDTH = 640
+const SCREEN_HEIGHT = 360
+
 type Facing4Way = 'up' | 'right' | 'down' | 'left'
 type Facing8Way = 'center-center' | 'up-left' | 'up-center' | 'up-right' | 'center-right' | 'down-right' | 'down-center' | 'down-left' | 'center-left'
 
@@ -52,7 +55,7 @@ function dist(a: { x: number, y: number }, b: { x: number, y: number }) {
 }
 
 function get3dSound(ent: { x: number, y: number }) {
-    return { pan: Math.min(1, Math.max(-1, (ent.x - gameState.player.x) / 320)), volume: 1 - Math.min(1, Math.max(dist(ent, gameState.player) / 320)) }
+    return { pan: Math.min(1, Math.max(-1, (ent.x - gameState.player.x) / SCREEN_WIDTH / 2)), volume: 1 - Math.min(1, Math.max(dist(ent, gameState.player) / SCREEN_WIDTH / 2)) }
 }
 
 function destroyComponent<T extends { destroy(): void }>(c: T): T {
@@ -219,8 +222,8 @@ export class PlayerPowerBar extends PowerBarBase {
 export class BossPowerBar extends PowerBarBase {
 
     get spriteKey() { return 'power-bar-boss' }
-    get screenX() { return 640 / 2 - (this.target?.maxPower ?? 0) / 10 * 8 - 6 }
-    get screenY() { return 480 - 160 }
+    get screenX() { return SCREEN_WIDTH / 2 - (this.target?.maxPower ?? 0) / 10 * 8 - 6 }
+    get screenY() { return SCREEN_HEIGHT - 60 }
     get target() { return gameState.enemies.find(e => e.active && e.isOnCurrentFloor && e instanceof EnemyBoss && (!e.isInvulnerable || e.hurtTime > 0)) }
 }
 
@@ -288,7 +291,7 @@ export class Alert extends ElementBase {
     index: number = 0
     lifetime: number = 5
 
-    get screenX() { return 640 }
+    get screenX() { return SCREEN_WIDTH }
     get screenY() { return 0 }
 
     constructor(public msg: string) {
@@ -443,9 +446,17 @@ export class Floor extends EntityBase {
             this.debugLayer = this.fgLayer.renderDebug(this.debugGfx)
         }
 
+        let debounceTarget: Phaser.GameObjects.GameObject | null = null
+        let debounceTime: number = 0
+
         this.collider = this.scene.physics.add.collider([gameState.playerGroup, gameState.droneGroup, gameState.enemyGroup, gameState.bulletGroup], this.fgLayer, other => {
             if (!other || !other.body) return
-            gameState.bumpSound.play(get3dSound(other.body))
+
+            if (other !== debounceTarget || debounceTime + 500 < Date.now()) {
+                gameState.bumpSound.play(get3dSound(other.body))
+                debounceTarget = other
+                debounceTime = Date.now()
+            }
 
             const b = gameState.bullets.find(b => b.spawned && b.body === other.body)
             if (b) b.destroy()
@@ -789,6 +800,7 @@ export class Player extends UnitBase {
             const target = this.getTargetForInteract()
 
             if (target instanceof DroneBase) {
+                gameState.clickSound.play(get3dSound(this))
                 const refund = Math.min(this.maxPower - this.power, target.power)
                 this.power += refund
                 target.destroy()
@@ -827,7 +839,8 @@ export class Player extends UnitBase {
 
     die() {
         super.die()
-        this.body.setVelocity(0, 0)
+        gameState.score.won = false
+        this.scene.scene.start('gameover')
     }
 
     getTargetForInteract() {
@@ -1210,6 +1223,7 @@ export abstract class EnemyBase extends DroneLikeBase {
                 gameState.drops.push(new DropPower(this.floorIndex, this.x, this.y, 10))
             }
         }
+        gameState.score.enemiesKilled++
         this.destroy()
     }
 }
@@ -1259,6 +1273,11 @@ export class EnemyBoss extends EnemyBase {
     die() {
         super.die(true)
         for (const e of gameState.enemies.filter(e => e.floorIndex === this.floorIndex)) e.power = 0
+        gameState.score.bossesDefeated++
+        if (gameState.score.bossesDefeated >= 5) {
+            gameState.score.won = true
+            this.scene.scene.start('gameover')
+        }
     }
 }
 
@@ -1737,9 +1756,17 @@ export class InteractableElevatorButton extends InteractableBase {
 
     interact() {
         if (this.isValidOnFloor() && this.isUnlocked()) {
-            gameState.player.floorIndex += this.delta
-            for (const d of gameState.drones) d.destroy()
-            gameState.player.sprite.setPosition(0, 0)
+            gameState.elevatorSound.play()
+            this.scene.cameras.main.fadeOut(250, 0, 0, 0, (cam: Phaser.Cameras.Scene2D.Camera, t: number) => {
+                if (t === 1) {
+                    for (const d of gameState.drones) d.destroy()
+                    gameState.player.floorIndex += this.delta
+                    gameState.player.sprite.setPosition(0, 0)
+                    this.scene.cameras.main.fadeIn(250, 0, 0, 0, (cam: Phaser.Cameras.Scene2D.Camera, t: number) => {
+
+                    })
+                }
+            }, this)
         } else if (!this.isValidOnFloor()) {
             gameState.elements.push(new Alert(`Cannot take elevator ${this.delta === 1 ? 'down' : 'up'}`))
         } else if (!this.isUnlocked()) {
@@ -1823,6 +1850,14 @@ export class GameState {
 
     tickRate: number = 0.5
 
+    score = {
+        enemiesKilled: 0,
+        bossesDefeated: 0,
+        floorsCleared: 0,
+        playTime: 0,
+        won: false,
+    }
+
     playerGroup!: Phaser.GameObjects.Group
     droneGroup!: Phaser.GameObjects.Group
     enemyGroup!: Phaser.GameObjects.Group
@@ -1836,6 +1871,7 @@ export class GameState {
     shootSound!: Phaser.Sound.BaseSound
     powerUpSound!: Phaser.Sound.BaseSound
     clickSound!: Phaser.Sound.BaseSound
+    elevatorSound!: Phaser.Sound.BaseSound
 
     keys!: {
         w: Phaser.Input.Keyboard.Key,
@@ -1856,18 +1892,105 @@ export class GameState {
     get entities() { return [this.player, ...this.drones, ...this.enemies, ...this.drops, ...this.bullets, ...this.interactibles, ...this.pylons, ...this.elements, ...this.floors] }
 }
 
-const gameState = new GameState()
+let gameState: GameState
 
-export class GameplayScene extends Phaser.Scene {
+export abstract class SceneBase extends Phaser.Scene {
+    loadingText!: Phaser.GameObjects.Text
+
+    preload() {
+        this.loadingText = this.add.text(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, '', { color: 'white', fontSize: '12px', fontFamily: 'sans-serif', align: 'center' })
+        this.loadingText.setDepth(9999)
+        this.loadingText.setScrollFactor(0, 0)
+        this.loadingText.setOrigin(0.5, 0.5)
+
+        this.load.on('progress', (value: number) => {
+            this.loadingText.setText(`Loading...\n${Math.round(value * 100)}%`)
+        })
+
+        this.load.on('complete', () => {
+            destroyComponent(this.loadingText)
+        })
+    }
+}
+
+export abstract class MenuSceneBase extends SceneBase {
+    titleText!: Phaser.GameObjects.Text
+    bodyText!: Phaser.GameObjects.Text
+    continueText!: Phaser.GameObjects.Text
+    creditsText!: Phaser.GameObjects.Text
+    continueKey!: Phaser.Input.Keyboard.Key
+    music!: Phaser.Sound.BaseSound
+
+    preload() {
+        super.preload()
+        this.load.audio('music-menu', 'assets/underglow.mp3')
+    }
+
+    create() {
+        this.titleText = this.add.text(SCREEN_WIDTH / 2, 100, '', { fontSize: '36px', fontStyle: 'bold' })
+        this.titleText.setOrigin(0.5, 0.5)
+        this.bodyText = this.add.text(100, 135, '', { fontSize: '12px', fixedWidth: SCREEN_WIDTH - 200, wordWrap: { width: SCREEN_WIDTH - 200 } })
+        this.continueText = this.add.text(SCREEN_WIDTH / 2, 275, 'Press spacebar to start a new playthough')
+        this.continueText.setOrigin(0.5, 0.5)
+        this.creditsText = this.add.text(0, SCREEN_HEIGHT, `Code by Josh Thome (Hawkbar)\nArt by Michael Schloeder (Insmoshable)\nMusic: "Underglow", "Dire Space Emergency", and "Chipstep"\nby Shane Ivers - https://www.silvermansound.com`, { fontSize: '12px' })
+        this.creditsText.setOrigin(0, 1)
+        this.continueKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE)
+        this.music = this.sound.add('music-menu', { loop: true })
+        this.music.play()
+    }
+
+    update() {
+        if (gameState?.normalMusic?.isPlaying) gameState?.normalMusic?.stop()
+        if (gameState?.bossMusic?.isPlaying) gameState?.bossMusic?.stop()
+        if (this.continueKey.isDown) {
+            this.music.stop()
+            gameState = new GameState()
+            this.scene.start('gameplay')
+        }
+    }
+}
+
+export class MenuScene extends MenuSceneBase {
+
+    constructor() { super('menu') }
+
+    create() {
+        super.create()
+        this.titleText.setText('Code-X')
+        this.bodyText.setText(`You are a specialized power supply drone from a deep underground military installation. Some of the other drones have gone haywire, attacking the facility's personnel. While you have no attacks of your own, you can carry and deploy other drones as long as you have their schematics and enough power to spare. Use your ability to find and destroy all the rogue supervisor drones in the lower levels of the facility before the surface is overrun!`)
+    }
+}
+
+export class GameOverScene extends MenuSceneBase {
+    titleText!: Phaser.GameObjects.Text
+
+    constructor() { super('gameover') }
+
+    create() {
+        super.create()
+        this.titleText.setText(gameState.score.won ? 'Victory' : 'Game Over')
+
+        const hours = Math.floor(gameState.score.playTime / (60 * 60)).toString()
+        const minutes = Math.floor((gameState.score.playTime % (60 * 60)) / 60).toString().padStart(2, '0')
+        const seconds = Math.floor(gameState.score.playTime % 60).toString().padStart(2, '0')
+        const time = `${hours}:${minutes}:${seconds}`
+
+        this.bodyText.setText(`${gameState.score.won ? 'You defeated all the rogue supervisors! The world is saved!' : 'You failed to stop the rogue supervisors. The surface was overrun by hostile robots. There were no survivors.'}\n\nEnemies Destroyed: ${gameState.score.enemiesKilled}\nBosses Defeated: ${gameState.score.bossesDefeated}\nFloors Cleared: ${gameState.score.floorsCleared}\nTotal Playtime: ${time}`)
+    }
+}
+
+export class GameplayScene extends SceneBase {
     text!: Phaser.GameObjects.Text
 
     constructor() { super('gameplay') }
 
     init() {
-        console.log(gameState)
+
     }
 
     preload() {
+        super.preload()
+
         this.load.image('placeholder', 'assets/placeholder.png')
         this.load.spritesheet('transparent', 'assets/Transparent.png', { frameWidth: 1 })
         this.load.spritesheet('drop-shadow', 'assets/DropShadow.png', { frameWidth: 32 })
@@ -1922,12 +2045,12 @@ export class GameplayScene extends Phaser.Scene {
 
         this.load.audio('music-normal', 'assets/dire-space-emergency.mp3')
         this.load.audio('music-boss', 'assets/chipstep.mp3')
-        this.load.audio('music-menu', 'assets/underglow.mp3')
         this.load.audio('sound-bump', 'assets/bump.wav')
         this.load.audio('sound-damage', 'assets/damage.wav')
         this.load.audio('sound-shoot', 'assets/laserShoot.wav')
         this.load.audio('sound-power-up', 'assets/powerUp.wav')
         this.load.audio('sound-click', 'assets/click.wav')
+        this.load.audio('sound-elevator', 'assets/elevator.wav')
     }
 
     create() {
@@ -1936,7 +2059,7 @@ export class GameplayScene extends Phaser.Scene {
         gameState.enemyGroup = this.physics.add.group()
         gameState.dropGroup = this.physics.add.group()
         gameState.bulletGroup = this.physics.add.group()
-        this.text = this.add.text(0, 360, '', { color: 'white', fontSize: '12px', fontFamily: 'sans-serif' })
+        this.text = this.add.text(0, SCREEN_HEIGHT, '', { color: 'white', fontSize: '12px', fontFamily: 'sans-serif' })
         this.text.setDepth(9999)
         this.text.setScrollFactor(0, 0)
         this.text.setOrigin(0, 1)
@@ -1947,6 +2070,7 @@ export class GameplayScene extends Phaser.Scene {
         gameState.shootSound = this.sound.add('sound-shoot')
         gameState.powerUpSound = this.sound.add('sound-power-up')
         gameState.clickSound = this.sound.add('sound-click')
+        gameState.elevatorSound = this.sound.add('sound-elevator')
 
         gameState.keys = {
             w: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
@@ -1964,6 +2088,8 @@ export class GameplayScene extends Phaser.Scene {
     }
 
     update(t: number, dt: number) {
+        gameState.score.playTime = t / 1000
+        gameState.score.floorsCleared = Math.max(gameState.score.floorsCleared, gameState.player.floorIndex)
         while (gameState.player.floorIndex >= gameState.floors.length) gameState.floors.push(new Floor(gameState.floors.length))
         for (const ent of gameState.entities.filter(e => e.isOnCurrentFloor && !e.spawned)) ent.spawn(this)
         for (const ent of gameState.entities.filter(e => !e.isOnCurrentFloor && e.spawned)) ent.despawn()
@@ -2001,8 +2127,8 @@ export class GameplayScene extends Phaser.Scene {
 const config: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
     backgroundColor: '#111',
-    width: 640,
-    height: 360,
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
     render: {
         pixelArt: true,
     },
@@ -2014,7 +2140,11 @@ const config: Phaser.Types.Core.GameConfig = {
             debug: DEBUG,
         }
     },
-    scene: GameplayScene,
+    scene: [
+        MenuScene,
+        GameOverScene,
+        GameplayScene,
+    ],
 };
 
 const game = new Phaser.Game(config)
