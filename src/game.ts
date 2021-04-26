@@ -1216,7 +1216,11 @@ export abstract class EnemyBase extends DroneLikeBase {
     die(skipPickups?: boolean) {
         super.die()
         if (!skipPickups) {
-            if (Math.random() < 0.1) {
+            const canDropKey = !this.floor.hasFoundElevatorKey && !this.floor.hasUnlockedElevator && !this.floor.isBossFloor && !gameState.drops.some(d => d.floorIndex === this.floorIndex && d instanceof DropKey)
+
+            if (canDropKey && Math.random() < 0.1) {
+                gameState.drops.push(new DropKey(this.floorIndex, this.x, this.y))
+            } else if (Math.random() < 0.1) {
                 const choices = droneSchematics.filter(s => !gameState.player.schematics.includes(s))
                 if (choices.length) gameState.drops.push(new DropSchematic(this.floorIndex, this.x, this.y, randItem(choices)!))
             } else {
@@ -1557,7 +1561,7 @@ export class DropPower extends DropBase {
 
     initialize() {
         super.initialize()
-        this.scene.anims.create({ key: this.spriteKey, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, {}) })
+        this.scene.anims.create({ key: this.spriteKey, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, {}), frameRate: 5, repeat: -1 })
     }
 
     postUpdate() {
@@ -1592,6 +1596,30 @@ export class DropSchematic extends DropBase {
         */
         gameState.player.schematics.push(this.schematic)
         gameState.elements.push(new Alert(`Acquired ${this.schematic.name} drone`))
+        return true
+    }
+}
+
+export class DropKey extends DropBase {
+
+    get spriteKey() { return 'pickup-key' }
+    get shadowOffset() { return -4 }
+
+    initialize() {
+        super.initialize()
+        this.scene.anims.create({ key: this.spriteKey, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, {}), frameRate: 5, repeat: -1 })
+    }
+
+    postUpdate() {
+        super.postUpdate()
+        if (!this.active) return
+        this.sprite.anims.play(this.spriteKey, true)
+    }
+
+    pickup() {
+        if (this.floor.hasFoundElevatorKey) return
+        gameState.elements.push(new Alert(`Found an elevator key`))
+        this.floor.hasFoundElevatorKey = true
         return true
     }
 }
@@ -1782,8 +1810,7 @@ export class InteractableElevatorButton extends InteractableBase {
 
     private isUnlocked(): boolean {
         if (this.delta === -1) return true
-        const noEnemies = gameState.enemies.filter(e => e.floorIndex === this.floorIndex && !e.dead).length === 0
-        return noEnemies
+        return this.floor.hasUnlockedElevator
     }
 
     private isValidOnFloor(): boolean {
@@ -2026,6 +2053,7 @@ export class GameplayScene extends SceneBase {
 
         this.load.spritesheet('pickup-energy', 'assets/Pickup-Energy.png', { frameWidth: 8 })
         this.load.spritesheet('pickup-schematic', 'assets/Pickup-Schematic.png', { frameWidth: 16 })
+        this.load.spritesheet('pickup-key', 'assets/Elevator-Key.png', { frameWidth: 32 })
 
         this.load.image('interactable-power-core', 'assets/Destructable-Powercore.png')
         this.load.spritesheet('interactable-arrows', 'assets/Arrows.png', { frameWidth: 32 })
