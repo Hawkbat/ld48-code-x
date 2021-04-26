@@ -141,8 +141,15 @@ export abstract class ElementBase extends EntityBase {
     abstract get screenX(): number
     abstract get screenY(): number
 
+    get isOnCurrentFloor() { return true }
+
     constructor() {
         super(-1)
+    }
+
+    destroy() {
+        super.destroy()
+        gameState.elements.splice(gameState.elements.indexOf(this), 1)
     }
 }
 
@@ -222,7 +229,6 @@ export class SchematicList extends ElementBase {
 
     get screenX() { return 4 }
     get screenY() { return 44 }
-    get isOnCurrentFloor() { return true }
 
     spawn(scene: Phaser.Scene) {
         super.spawn(scene)
@@ -275,6 +281,45 @@ export class SchematicList extends ElementBase {
     }
 }
 
+export class Alert extends ElementBase {
+    text!: Phaser.GameObjects.Text
+    index: number = 0
+    lifetime: number = 5
+
+    get screenX() { return 640 }
+    get screenY() { return 0 }
+
+    constructor(public msg: string) {
+        super()
+    }
+
+    spawn(scene: Phaser.Scene) {
+        super.spawn(scene)
+
+        for (this.index = 0; this.index < 20; this.index++) {
+            if (!gameState.elements.some(e => e instanceof Alert && e !== this && e.index === this.index)) break
+        }
+        this.text = this.scene.add.text(this.screenX, this.screenY + this.index * 16, '', { color: 'white', fontSize: '12px', fontFamily: 'sans-serif' })
+        this.text.setDepth(9999)
+        this.text.setScrollFactor(0, 0)
+        this.text.setOrigin(1, 0)
+        this.text.setText(this.msg)
+    }
+
+    despawn() {
+        super.despawn()
+        this.text = destroyComponent(this.text)
+    }
+
+    update(t: number, dt: number) {
+        super.update(t, dt)
+        if (!this.active) return
+        this.lifetime -= dt
+        if (this.lifetime < 1) this.text.setAlpha(this.lifetime)
+        if (this.lifetime < 0) this.destroy()
+    }
+}
+
 export class Floor extends EntityBase {
     map!: Phaser.Tilemaps.Tilemap
     bgTileset!: Phaser.Tilemaps.Tileset
@@ -290,6 +335,8 @@ export class Floor extends EntityBase {
 
     hasOpenedBossRoom: boolean = false
     hasOpenedBossElevator: boolean = false
+    hasFoundElevatorKey: boolean = false
+    hasUnlockedElevator: boolean = false
 
     roomUpLeftType: number = -1
     roomUpCenterType: number = -1
@@ -446,6 +493,14 @@ export class Floor extends EntityBase {
                 this.setVerticalDoor(11, 8, true)
             }
         }
+        if (this.hasSpawnedObjects) {
+            const noEnemies = gameState.enemies.filter(e => e.floorIndex === this.floorIndex && !e.dead).length === 0
+            const shouldUnlockElevator = noEnemies || this.hasFoundElevatorKey
+            if (shouldUnlockElevator && !this.hasUnlockedElevator) {
+                this.hasUnlockedElevator = true
+                gameState.elements.push(new Alert(`Elevator has been unlocked`))
+            }
+        }
     }
 
     private spawnRoom(sx: number, sy: number) {
@@ -516,6 +571,7 @@ export class Floor extends EntityBase {
         if (fgIndex) {
             this.fgLayer.putTileAt(1024 + 1 + fgIndex, x, y)
             this.fgLayer.getTileAt(x, y)?.setSize(32, 40, 32, 32)
+            this.fgLayer.getTileAt(x, y)?.setCollision(fgIndex !== -1)
         }
         if (bgIndex) this.bgLayer.putTileAt(1 + bgIndex, x, y)
     }
@@ -1484,6 +1540,7 @@ export class DropSchematic extends DropBase {
         gameState.player.schematics[slotIndex] = this.schematic
         */
         gameState.player.schematics.push(this.schematic)
+        gameState.elements.push(new Alert(`Acquired ${this.schematic.name} drone`))
         return true
     }
 }
@@ -1613,9 +1670,7 @@ export class InteractablePowerCore extends InteractableBase {
     get spriteKey() { return 'interactable-power-core' }
     get shadowOffset() { return 4 }
     get actionText() {
-        return gameState.player.power < gameState.player.maxPower ?
-            `Pick up power core (+${this.power} power)` :
-            `Cannot pick up power core (already at max power)`
+        return `Pick up power core (+${this.power} power)`
     }
 
     interact() {
@@ -1624,6 +1679,8 @@ export class InteractablePowerCore extends InteractableBase {
             gameState.player.power += delta
             gameState.powerUpSound.play(get3dSound(this))
             this.destroy()
+        } else {
+            gameState.elements.push(new Alert(`Cannot pick up power core (already at max power)`))
         }
     }
 }
@@ -1633,11 +1690,7 @@ export class InteractableElevatorButton extends InteractableBase {
     get spriteKey() { return 'interactable-arrows' }
     get shadowOffset() { return 0 }
     get actionText() {
-        return this.isValidOnFloor() ?
-            (this.isUnlocked() ?
-                `Take elevator ${this.delta === 1 ? 'down' : 'up'}` :
-                `Cannot take elevator (locked by enemies)`) :
-            `Cannot take elevator ${this.delta === 1 ? 'down' : 'up'}`
+        return `Take elevator ${this.delta === 1 ? 'down' : 'up'}`
     }
 
     constructor(floorIndex: number, x: number, y: number, public delta: -1 | 1, public main: boolean) {
@@ -1655,6 +1708,10 @@ export class InteractableElevatorButton extends InteractableBase {
             gameState.player.floorIndex += this.delta
             for (const d of gameState.drones) d.destroy()
             gameState.player.sprite.setPosition(0, 0)
+        } else if (!this.isValidOnFloor()) {
+            gameState.elements.push(new Alert(`Cannot take elevator ${this.delta === 1 ? 'down' : 'up'}`))
+        } else if (!this.isUnlocked()) {
+            gameState.elements.push(new Alert(`Cannot take elevator (locked by enemies)`))
         }
     }
 
