@@ -3,11 +3,27 @@ import { Scene } from 'phaser'
 
 const DEBUG = false
 
+const SCREEN_WIDTH = 640
+const SCREEN_HEIGHT = 360
+
 type Facing4Way = 'up' | 'right' | 'down' | 'left'
 type Facing8Way = 'center-center' | 'up-left' | 'up-center' | 'up-right' | 'center-right' | 'down-right' | 'down-center' | 'down-left' | 'center-left'
 
 const FACING_4WAY: Facing4Way[] = ['up', 'right', 'down', 'left']
 const FACING_8WAY: Facing8Way[] = ['up-left', 'up-center', 'up-right', 'center-right', 'down-right', 'down-center', 'down-left', 'center-left']
+
+enum IconType {
+    gun = 0,
+    multishot = 1,
+    tracking = 2,
+    punch = 3,
+    boomerang = 4,
+    directionalGun = 5,
+    directionalMulti = 6,
+    directionlTracking = 7,
+
+    length,
+}
 
 window.onerror = (msg, src, line, col, err) => {
     if (!DEBUG) {
@@ -39,7 +55,7 @@ function dist(a: { x: number, y: number }, b: { x: number, y: number }) {
 }
 
 function get3dSound(ent: { x: number, y: number }) {
-    return { pan: Math.min(1, Math.max(-1, (ent.x - gameState.player.x) / 320)), volume: 1 - Math.min(1, Math.max(dist(ent, gameState.player) / 320)) }
+    return { pan: Math.min(1, Math.max(-1, (ent.x - gameState.player.x) / SCREEN_WIDTH / 2)), volume: 1 - Math.min(1, Math.max(dist(ent, gameState.player) / SCREEN_WIDTH / 2)) }
 }
 
 function destroyComponent<T extends { destroy(): void }>(c: T): T {
@@ -48,17 +64,17 @@ function destroyComponent<T extends { destroy(): void }>(c: T): T {
 }
 
 export class DroneSchematic {
-    constructor(public name: string, public cost: number, public create: (creator: Player, schematic: DroneSchematic) => DroneBase) {
+    constructor(public name: string, public cost: number, public icon: IconType, public create: (creator: Player, schematic: DroneSchematic) => DroneBase) {
 
     }
 }
 
 export const droneSchematics = [
-    new DroneSchematic('Turret', 10, (p, s) => new DroneGun(p.floorIndex, p.x, p.y, p.facing, s)),
-    new DroneSchematic('Puncher', 15, (p, s) => new DroneHoverPunch(p.floorIndex, p.x, p.y, p.facing, s)),
-    new DroneSchematic('Boomerang', 15, (p, s) => new DroneSpinBoomerang(p.floorIndex, p.x, p.y, p.facing, s)),
-    new DroneSchematic('Tracker', 15, (p, s) => new DroneTracker(p.floorIndex, p.x, p.y, p.facing, s)),
-    new DroneSchematic('Strafer', 15, (p, s) => new DroneDirectionalGun(p.floorIndex, p.x, p.y, p.facing, s)),
+    new DroneSchematic('Turret', 10, IconType.gun, (p, s) => new DroneGun(p.floorIndex, p.x, p.y, p.facing, s)),
+    new DroneSchematic('Puncher', 15, IconType.punch, (p, s) => new DroneHoverPunch(p.floorIndex, p.x, p.y, p.facing, s)),
+    new DroneSchematic('Boomerang', 15, IconType.boomerang, (p, s) => new DroneSpinBoomerang(p.floorIndex, p.x, p.y, p.facing, s)),
+    new DroneSchematic('Tracker', 15, IconType.tracking, (p, s) => new DroneTracker(p.floorIndex, p.x, p.y, p.facing, s)),
+    new DroneSchematic('Strafer', 15, IconType.directionalGun, (p, s) => new DroneDirectionalGun(p.floorIndex, p.x, p.y, p.facing, s)),
 ]
 
 export class EnemySchematic {
@@ -94,6 +110,8 @@ export abstract class EntityBase {
     get isOnCurrentFloor() {
         return this.floorIndex === gameState.player.floorIndex
     }
+    get floorNumber() { return this.floorIndex % 5 }
+    get sectionNumber() { return Math.floor(this.floorIndex / 5) }
 
     initialize() {
         this.initialized = true
@@ -127,6 +145,17 @@ export abstract class EntityBase {
 export abstract class ElementBase extends EntityBase {
     abstract get screenX(): number
     abstract get screenY(): number
+
+    get isOnCurrentFloor() { return true }
+
+    constructor() {
+        super(-1)
+    }
+
+    destroy() {
+        super.destroy()
+        gameState.elements.splice(gameState.elements.indexOf(this), 1)
+    }
 }
 
 export abstract class PowerBarBase extends ElementBase {
@@ -136,10 +165,6 @@ export abstract class PowerBarBase extends ElementBase {
 
     abstract get spriteKey(): string
     abstract get target(): UnitBase | undefined
-
-    constructor() {
-        super(-1)
-    }
 
     despawn() {
         super.despawn()
@@ -167,19 +192,137 @@ export abstract class PowerBarBase extends ElementBase {
 }
 
 export class PlayerPowerBar extends PowerBarBase {
+    text!: Phaser.GameObjects.Text
 
     get spriteKey() { return 'power-bar-player' }
     get screenX() { return 0 }
     get screenY() { return 0 }
     get target() { return gameState.player }
+
+    spawn(scene: Phaser.Scene) {
+        super.spawn(scene)
+        this.text = this.scene.add.text(this.screenX + 4, this.screenY + 12, '', { color: 'white', fontSize: '12px', fontFamily: 'sans-serif' })
+        this.text.setDepth(9999)
+        this.text.setScrollFactor(0, 0)
+        this.text.setOrigin(0, 0)
+    }
+
+    despawn() {
+        super.despawn()
+        this.text = destroyComponent(this.text)
+    }
+
+    postUpdate() {
+        super.postUpdate()
+        if (!this.active) return
+        this.text.setText(`Power: ${this.target.power} / ${this.target?.maxPower}`)
+    }
 }
 
 export class BossPowerBar extends PowerBarBase {
 
     get spriteKey() { return 'power-bar-boss' }
-    get screenX() { return 640 / 2 - (this.target?.maxPower ?? 0) / 10 * 8 - 6 }
-    get screenY() { return 480 - 192 }
+    get screenX() { return SCREEN_WIDTH / 2 - (this.target?.maxPower ?? 0) / 10 * 8 - 6 }
+    get screenY() { return SCREEN_HEIGHT - 60 }
     get target() { return gameState.enemies.find(e => e.active && e.isOnCurrentFloor && e instanceof EnemyBoss && (!e.isInvulnerable || e.hurtTime > 0)) }
+}
+
+export class SchematicList extends ElementBase {
+    text!: Phaser.GameObjects.Text
+    boxSprites: Phaser.GameObjects.Sprite[] = []
+    iconSprites: Phaser.GameObjects.Sprite[] = []
+
+    get screenX() { return 4 }
+    get screenY() { return 44 }
+
+    spawn(scene: Phaser.Scene) {
+        super.spawn(scene)
+        this.text = this.scene.add.text(this.screenX, this.screenY + 16, '', { color: 'white', fontSize: '12px', fontFamily: 'sans-serif' })
+        this.text.setDepth(9999)
+        this.text.setScrollFactor(0, 0)
+        this.text.setOrigin(0, 0)
+    }
+
+    despawn() {
+        super.despawn()
+        this.text = destroyComponent(this.text)
+        while (this.boxSprites.length) destroyComponent(this.boxSprites.pop()!)
+        while (this.iconSprites.length) destroyComponent(this.iconSprites.pop()!)
+    }
+
+    postUpdate() {
+        super.postUpdate()
+        if (!this.active) return
+        const count = gameState.player.schematics.length
+        while (this.boxSprites.length > count) destroyComponent(this.boxSprites.pop()!)
+        while (this.iconSprites.length > count) destroyComponent(this.iconSprites.pop()!)
+        for (let i = 0; i < count; i++) {
+            while (this.boxSprites.length <= i)
+                this.boxSprites.push(this.scene.add.sprite(0, 0, 'ui-schematic-box'))
+            while (this.iconSprites.length <= i)
+                this.iconSprites.push(this.scene.add.sprite(0, 0, 'ui-schematic-icon'))
+
+            this.boxSprites[i].setDepth(9998)
+            this.boxSprites[i].setScrollFactor(0, 0)
+
+            this.iconSprites[i].setDepth(9998)
+            this.iconSprites[i].setScrollFactor(0, 0)
+
+            this.boxSprites[i].setPosition(this.screenX + 16 + 36 * i, this.screenY)
+            this.iconSprites[i].setPosition(this.screenX + 16 + 36 * i, this.screenY)
+
+            this.boxSprites[i].setFrame(i === gameState.player.schematicIndex ? 0 : 1)
+
+            const s = gameState.player.schematics[i]
+            if (s) {
+                const deployed = gameState.drones.some(d => d.schematic === s)
+                const canAfford = gameState.player.power > s.cost
+                const row = deployed ? 2 : canAfford ? 0 : 1
+                this.iconSprites[i].setFrame(IconType.length * row + s.icon)
+            }
+            this.iconSprites[i].setVisible(!!s)
+        }
+        this.text.setText(gameState.player.schematics[gameState.player.schematicIndex]?.name ?? '')
+    }
+}
+
+export class Alert extends ElementBase {
+    text!: Phaser.GameObjects.Text
+    index: number = 0
+    lifetime: number = 5
+
+    get screenX() { return SCREEN_WIDTH }
+    get screenY() { return 0 }
+
+    constructor(public msg: string) {
+        super()
+    }
+
+    spawn(scene: Phaser.Scene) {
+        super.spawn(scene)
+
+        for (this.index = 0; this.index < 20; this.index++) {
+            if (!gameState.elements.some(e => e instanceof Alert && e !== this && e.index === this.index)) break
+        }
+        this.text = this.scene.add.text(this.screenX, this.screenY + this.index * 16, '', { color: 'white', fontSize: '12px', fontFamily: 'sans-serif' })
+        this.text.setDepth(9999)
+        this.text.setScrollFactor(0, 0)
+        this.text.setOrigin(1, 0)
+        this.text.setText(this.msg)
+    }
+
+    despawn() {
+        super.despawn()
+        this.text = destroyComponent(this.text)
+    }
+
+    update(t: number, dt: number) {
+        super.update(t, dt)
+        if (!this.active) return
+        this.lifetime -= dt
+        if (this.lifetime < 1) this.text.setAlpha(this.lifetime)
+        if (this.lifetime < 0) this.destroy()
+    }
 }
 
 export class Floor extends EntityBase {
@@ -197,6 +340,8 @@ export class Floor extends EntityBase {
 
     hasOpenedBossRoom: boolean = false
     hasOpenedBossElevator: boolean = false
+    hasFoundElevatorKey: boolean = false
+    hasUnlockedElevator: boolean = false
 
     roomUpLeftType: number = -1
     roomUpCenterType: number = -1
@@ -216,7 +361,6 @@ export class Floor extends EntityBase {
     get hasRoomDownLeft() { return this.roomDownLeftType >= 0 }
     get hasRoomCenterLeft() { return this.roomCenterLeftType >= 0 }
 
-    get floorNumber() { return this.floorIndex % 5 }
     get isTopFloor() { return this.floorNumber === 0 }
     get isBossFloor() { return this.floorNumber === 4 }
 
@@ -252,21 +396,12 @@ export class Floor extends EntityBase {
         this.fgLayer.setDepth(-9000)
         this.fgLayer.setCollisionByExclusion([-1])
 
-        // Elevator floor indicators
-        this.setTile(9, 32, 32 * this.floorNumber + 6)
-        this.setTile(10, 32, 32 * this.floorNumber + 7)
-        this.setTile(13, 32, 32 * this.floorNumber + 4)
-        this.setTile(14, 32, 32 * this.floorNumber + 5)
-
-        // Elevator buttons
-        this.setTile(9, 33, null, this.isBossFloor ? 194 : 192)
-        this.setTile(10, 33, null, this.isBossFloor ? 195 : 193)
-        this.setTile(13, 33, null, this.isTopFloor ? 194 : 192)
-        this.setTile(14, 33, null, this.isTopFloor ? 195 : 193)
+        this.setElevator(8, 32, this.floorNumber, this.sectionNumber, this.isTopFloor, this.isBossFloor)
 
         // Boss rooms
         if (this.isBossFloor) {
             this.copyRect(0, 92, 4, 0, 16, 32)
+            this.setElevator(8, 0, 0, this.sectionNumber + 1, true, false)
         } else {
             this.clearRect(0, 0, 24, 32)
         }
@@ -311,8 +446,17 @@ export class Floor extends EntityBase {
             this.debugLayer = this.fgLayer.renderDebug(this.debugGfx)
         }
 
+        let debounceTarget: Phaser.GameObjects.GameObject | null = null
+        let debounceTime: number = 0
+
         this.collider = this.scene.physics.add.collider([gameState.playerGroup, gameState.droneGroup, gameState.enemyGroup, gameState.bulletGroup], this.fgLayer, other => {
-            gameState.bumpSound.play(get3dSound(other.body))
+            if (!other || !other.body) return
+
+            if (other !== debounceTarget || debounceTime + 500 < Date.now()) {
+                gameState.bumpSound.play(get3dSound(other.body))
+                debounceTarget = other
+                debounceTime = Date.now()
+            }
 
             const b = gameState.bullets.find(b => b.spawned && b.body === other.body)
             if (b) b.destroy()
@@ -344,20 +488,30 @@ export class Floor extends EntityBase {
                 this.hasOpenedBossRoom = true
                 this.setVerticalDoor(11, 23, true)
                 this.setVerticalDoor(11, 24, true)
+                gameState.elements.push(new Alert(`The supervisor drone has activated!`))
             }
             const shouldOpenBossElevator = gameState.enemies.filter(p => p.floorIndex === this.floorIndex && p instanceof EnemyBoss).length === 0
             if (shouldOpenBossElevator && !this.hasOpenedBossElevator) {
                 this.hasOpenedBossElevator = true
                 this.setVerticalDoor(11, 7, true)
                 this.setVerticalDoor(11, 8, true)
+                gameState.elements.push(new Alert(`The supervisor drone was defeated!`))
+            }
+        }
+        if (this.hasSpawnedObjects) {
+            const noEnemies = gameState.enemies.filter(e => e.floorIndex === this.floorIndex && !e.dead).length === 0
+            const shouldUnlockElevator = noEnemies || this.hasFoundElevatorKey
+            if (shouldUnlockElevator && !this.hasUnlockedElevator) {
+                this.hasUnlockedElevator = true
+                gameState.elements.push(new Alert(`Elevator has been unlocked`))
             }
         }
     }
 
     private spawnRoom(sx: number, sy: number) {
         const tiles = shuffle(this.getEmptyTiles(sx + 1, sy + 1, 8 - 2, 8 - 2))
-        let enemyBudget = rand(0, 3 + this.floorIndex) * 10
         const powerCores = rand(0, 2)
+        let enemyBudget = rand(0, 5 + this.floorIndex) * 5
         while (enemyBudget > 0 && tiles.length) {
             const { x, y } = tiles.pop()!
             const schematic = randItem(enemySchematics.filter(s => s.cost <= enemyBudget))
@@ -371,12 +525,12 @@ export class Floor extends EntityBase {
         }
     }
 
-    private getEmptyTiles(sx: number, sy: number, w: number, h: number): { x: number, y: number }[] {
+    public getEmptyTiles(sx: number, sy: number, w: number, h: number) {
         const values = []
         for (let x = sx; x < sx + w; x++) {
             for (let y = sy; y < sy + h; y++) {
                 const t = this.fgLayer.getTileAt(x, y, true)
-                if (t.index === -1) values.push({ x: t.getCenterX(), y: t.getCenterY() })
+                if (t.index === -1) values.push({ x: t.getCenterX(), y: t.getCenterY(), tx: x, ty: y })
             }
         }
         return values
@@ -391,6 +545,7 @@ export class Floor extends EntityBase {
             this.clearRoom(dx, dy)
         }
     }
+
     private setRoomDoors(dx: number, dy: number, neighborUp: boolean | null, neighborRight: boolean | null, neighborDown: boolean | null, neighborLeft: boolean | null) {
         if (neighborUp !== null) this.setVerticalDoor(dx + 3, dy + 0, neighborUp)
         if (neighborDown !== null) this.setVerticalDoor(dx + 3, dy + 7, neighborDown)
@@ -399,19 +554,43 @@ export class Floor extends EntityBase {
     }
 
     private setHorizontalDoor(dx: number, dy: number, open: boolean) {
-        if (open) {
-            this.setTile(dx + 0, dy + 0, open ? -1 : 166, open ? 162 : -1)
-            this.setTile(dx + 0, dy + 1, open ? -1 : 167, open ? 163 : -1)
-        }
+        this.setTile(dx + 0, dy + 0, open ? -1 : 166, open ? 162 : -1)
+        this.setTile(dx + 0, dy + 1, open ? -1 : 167, open ? 163 : -1)
     }
 
     private setVerticalDoor(dx: number, dy: number, open: boolean) {
-        if (open) {
-            this.setTile(dx + 0, dy + 0, open ? -1 : 164, open ? 160 : -1)
-            this.setTile(dx + 1, dy + 0, open ? -1 : 165, open ? 161 : -1)
-        }
+        this.setTile(dx + 0, dy + 0, open ? -1 : 164, open ? 160 : -1)
+        this.setTile(dx + 1, dy + 0, open ? -1 : 165, open ? 161 : -1)
     }
 
+    private setElevator(dx: number, dy: number, floor: number, section: number, isTopFloor: boolean, isBossFloor: boolean) {
+        this.setElevatorFloorIndicators(dx, dy, floor)
+        this.setElevatorButtons(dx, dy, isTopFloor, isBossFloor)
+        this.setElevatorFloor(dx, dy, section)
+    }
+
+    private setElevatorFloorIndicators(dx: number, dy: number, floor: number) {
+        this.setTile(dx + 1, dy, 32 * floor + 6)
+        this.setTile(dx + 2, dy, 32 * floor + 7)
+        this.setTile(dx + 5, dy, 32 * floor + 4)
+        this.setTile(dx + 6, dy, 32 * floor + 5)
+    }
+
+    private setElevatorButtons(dx: number, dy: number, isTopFloor: boolean, isBossFloor: boolean) {
+        this.setTile(dx + 1, dy + 1, null, isBossFloor ? 194 : 192)
+        this.setTile(dx + 2, dy + 1, null, isBossFloor ? 195 : 193)
+        this.setTile(dx + 5, dy + 1, null, isTopFloor ? 194 : 192)
+        this.setTile(dx + 6, dy + 1, null, isTopFloor ? 195 : 193)
+    }
+
+    private setElevatorFloor(dx: number, dy: number, section: number) {
+        const index = [256, 320, 384, 258, 322][Math.min(section, 4)]
+
+        this.setTile(dx + 3, dy + 3, null, index + 0)
+        this.setTile(dx + 4, dy + 3, null, index + 1)
+        this.setTile(dx + 3, dy + 4, null, index + 32 + 0)
+        this.setTile(dx + 4, dy + 4, null, index + 32 + 1)
+    }
 
     private copyRoom(sx: number, sy: number, dx: number, dy: number) {
         return this.copyRect(sx, sy, dx, dy, 8, 8)
@@ -425,6 +604,7 @@ export class Floor extends EntityBase {
         if (fgIndex) {
             this.fgLayer.putTileAt(1024 + 1 + fgIndex, x, y)
             this.fgLayer.getTileAt(x, y)?.setSize(32, 40, 32, 32)
+            this.fgLayer.getTileAt(x, y)?.setCollision(fgIndex !== -1)
         }
         if (bgIndex) this.bgLayer.putTileAt(1 + bgIndex, x, y)
     }
@@ -537,7 +717,7 @@ export abstract class UnitBase extends ActorBase {
             if (dmg > 0) {
                 this.power -= dmg
                 this.hurtTime = this.invulnPeriod
-                const dir = new Phaser.Math.Vector2(this.sprite.x - inflictor.sprite.x, this.sprite.y - inflictor.sprite.y).normalize()
+                const dir = new Phaser.Math.Vector2(this.x - inflictor.x, this.y - inflictor.y).normalize()
                 this.hurtDirX = dir.x
                 this.hurtDirY = dir.y
                 gameState.damageSound.play(get3dSound(this))
@@ -561,7 +741,7 @@ export class Player extends UnitBase {
     get invulnPeriod() { return 1 }
 
     constructor() {
-        super(4, 0, 0, 50, 100)
+        super(0, 0, 0, 100, 100)
     }
 
     initialize() {
@@ -578,6 +758,7 @@ export class Player extends UnitBase {
 
     spawn(scene: Phaser.Scene) {
         super.spawn(scene)
+        this.body.setSize(20, 20)
         gameState.playerGroup.add(this.sprite)
     }
 
@@ -589,14 +770,14 @@ export class Player extends UnitBase {
     update(t: number, dt: number) {
         super.update(t, dt)
         if (!this.active || this.dead) return
-        const cursors = this.scene.input.keyboard.createCursorKeys()
         const speed = 128
         let vx = 0
         let vy = 0
-        if (cursors.left.isDown) vx -= 1
-        if (cursors.right.isDown) vx += 1
-        if (cursors.up.isDown) vy -= 1
-        if (cursors.down.isDown) vy += 1
+
+        if (gameState.keys.a.isDown || gameState.keys.left.isDown) vx -= 1
+        if (gameState.keys.d.isDown || gameState.keys.right.isDown) vx += 1
+        if (gameState.keys.w.isDown || gameState.keys.up.isDown) vy -= 1
+        if (gameState.keys.s.isDown || gameState.keys.down.isDown) vy += 1
         if (vx !== 0 && vy !== 0) {
             vx *= Math.sqrt(0.5)
             vy *= Math.sqrt(0.5)
@@ -613,30 +794,41 @@ export class Player extends UnitBase {
         }
         this.body.setVelocity(vx * speed, vy * speed)
 
-        if (cursors.space.isDown && !this.placing) {
+        if (gameState.keys.space.isDown && !this.placing) {
             this.placing = true
 
             const target = this.getTargetForInteract()
 
             if (target instanceof DroneBase) {
+                gameState.clickSound.play(get3dSound(this))
                 const refund = Math.min(this.maxPower - this.power, target.power)
                 this.power += refund
                 target.destroy()
             } else if (target instanceof InteractableBase) {
                 target.interact()
             } else if (target instanceof DroneSchematic) {
-                this.power -= target.cost
-                const drone = target.create(this, target)
-                gameState.drones.push(drone)
+                if (gameState.drones.some(d => d.schematic === target)) {
+                    gameState.elements.push(new Alert(`Existing ${target.name} must be picked up before redeploying`))
+                } else {
+                    const noCost = gameState.pylons.some(p => p.floorIndex === this.floorIndex && p.boss && p.isPowered)
+                    if (noCost || this.power > target.cost) {
+                        if (!noCost)
+                            this.power -= target.cost
+                        const drone = target.create(this, target)
+                        gameState.drones.push(drone)
+                    } else {
+                        gameState.elements.push(new Alert(`Insufficient power to deploy ${target.name} drone`))
+                    }
+                }
             }
         }
-        if (!cursors.space.isDown && this.placing) this.placing = false
+        if (!gameState.keys.space.isDown && this.placing) this.placing = false
 
-        if (cursors.shift.isDown && !this.swapping) {
+        if ((gameState.keys.shift.isDown || gameState.keys.tab.isDown) && !this.swapping) {
             this.swapping = true
             this.schematicIndex = (this.schematicIndex + 1) % this.schematics.length
         }
-        if (!cursors.shift.isDown && this.swapping) this.swapping = false
+        if (!(gameState.keys.shift.isDown || gameState.keys.tab.isDown) && this.swapping) this.swapping = false
     }
 
     postUpdate() {
@@ -647,7 +839,8 @@ export class Player extends UnitBase {
 
     die() {
         super.die()
-        this.body.setVelocity(0, 0)
+        gameState.score.won = false
+        this.scene.scene.start('gameover')
     }
 
     getTargetForInteract() {
@@ -658,7 +851,7 @@ export class Player extends UnitBase {
         if (i) return i
 
         const s = this.schematics[this.schematicIndex]
-        if (s && this.power > s.cost && !gameState.drones.some(d => d.schematic === s)) return s
+        if (s) return s
     }
 }
 
@@ -1023,28 +1216,72 @@ export abstract class EnemyBase extends DroneLikeBase {
     die(skipPickups?: boolean) {
         super.die()
         if (!skipPickups) {
-            if (Math.random() < 0.1) {
+            const canDropKey = !this.floor.hasFoundElevatorKey && !this.floor.hasUnlockedElevator && !this.floor.isBossFloor && !gameState.drops.some(d => d.floorIndex === this.floorIndex && d instanceof DropKey)
+
+            if (canDropKey && Math.random() < 0.1) {
+                gameState.drops.push(new DropKey(this.floorIndex, this.x, this.y))
+            } else if (Math.random() < 0.1) {
                 const choices = droneSchematics.filter(s => !gameState.player.schematics.includes(s))
                 if (choices.length) gameState.drops.push(new DropSchematic(this.floorIndex, this.x, this.y, randItem(choices)!))
             } else {
                 gameState.drops.push(new DropPower(this.floorIndex, this.x, this.y, 10))
             }
         }
+        gameState.score.enemiesKilled++
         this.destroy()
     }
 }
 
 export class EnemyBoss extends EnemyBase {
+    subtick: number = 0
+
     get movementType() { return 'boss' as const }
     get attachSpriteKey() { return 'transparent' }
     get isInvulnerable() { return this.hurtTime > 0 || !gameState.pylons.filter(p => p.floorIndex === this.floorIndex && p.boss).every(p => p.isPowered) }
 
     constructor(floorIndex: number, x: number, y: number) {
-        super(floorIndex, x, y, 'down', 200, 15, bossSchematic)
+        super(floorIndex, x, y, 'down', 100, 10, bossSchematic)
+        this.power = this.maxPower = 100 + this.sectionNumber * 50
+    }
+
+    spawn(scene: Phaser.Scene) {
+        super.spawn(scene)
+        this.body.setSize(60, 60)
+    }
+
+    tick() {
+        super.tick()
+        if (!this.active || !this.floor.hasOpenedBossRoom) return
+        if ((this.subtick % 4) === 0) {
+            this.body.setVelocity(rand(1, -1) * 64, rand(1, -1) * 64)
+        } else {
+            this.body.setVelocity(0, 0)
+        }
+        if (this.subtick === 16) {
+            const pylonsActive = gameState.pylons.filter(p => p.floorIndex === this.floorIndex && p.boss && p.isPowered).length
+            let enemyBudget = (rand(1, 1 + pylonsActive) + this.sectionNumber) * 10
+            const tiles = this.floor.getEmptyTiles(this.mapX - 1, this.mapY - 1, 3, 3).filter(t => !gameState.enemies.some(e => e.floorIndex === this.floorIndex && e.mapX === t.tx && e.mapY === t.ty))
+            while (enemyBudget > 0 && tiles.length) {
+                const { x, y } = tiles.pop()!
+                const schematic = randItem(enemySchematics.filter(s => s.cost <= enemyBudget))
+                if (!schematic) break
+                enemyBudget -= schematic.cost
+                gameState.enemies.push(schematic.create(this.floorIndex, x, y, randItem(FACING_4WAY)!, schematic))
+            }
+            this.subtick = 0
+        } else {
+            this.subtick++
+        }
     }
 
     die() {
         super.die(true)
+        for (const e of gameState.enemies.filter(e => e.floorIndex === this.floorIndex)) e.power = 0
+        gameState.score.bossesDefeated++
+        if (gameState.score.bossesDefeated >= 5) {
+            gameState.score.won = true
+            this.scene.scene.start('gameover')
+        }
     }
 }
 
@@ -1292,7 +1529,10 @@ export abstract class DropBase extends ActorBase {
         super.spawn(scene)
         gameState.dropGroup.add(this.sprite)
         this.collider = this.scene.physics.add.overlap(this.sprite, gameState.playerGroup, () => {
-            if (this.pickup()) this.destroy()
+            if (this.pickup()) {
+                gameState.powerUpSound.play(get3dSound(this))
+                this.destroy()
+            }
         }, undefined, this)
         this.collider.overlapOnly = true
     }
@@ -1321,7 +1561,7 @@ export class DropPower extends DropBase {
 
     initialize() {
         super.initialize()
-        this.scene.anims.create({ key: this.spriteKey, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, {}) })
+        this.scene.anims.create({ key: this.spriteKey, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, {}), frameRate: 5, repeat: -1 })
     }
 
     postUpdate() {
@@ -1334,7 +1574,6 @@ export class DropPower extends DropBase {
         if (gameState.player.power < gameState.player.maxPower) {
             const delta = Math.min(gameState.player.maxPower - gameState.player.power, this.power)
             gameState.player.power += delta
-            gameState.powerUpSound.play(get3dSound(this))
             return true
         }
     }
@@ -1356,6 +1595,31 @@ export class DropSchematic extends DropBase {
         gameState.player.schematics[slotIndex] = this.schematic
         */
         gameState.player.schematics.push(this.schematic)
+        gameState.elements.push(new Alert(`Acquired ${this.schematic.name} drone`))
+        return true
+    }
+}
+
+export class DropKey extends DropBase {
+
+    get spriteKey() { return 'pickup-key' }
+    get shadowOffset() { return -4 }
+
+    initialize() {
+        super.initialize()
+        this.scene.anims.create({ key: this.spriteKey, frames: this.scene.anims.generateFrameNumbers(this.spriteKey, {}), frameRate: 5, repeat: -1 })
+    }
+
+    postUpdate() {
+        super.postUpdate()
+        if (!this.active) return
+        this.sprite.anims.play(this.spriteKey, true)
+    }
+
+    pickup() {
+        if (this.floor.hasFoundElevatorKey) return
+        gameState.elements.push(new Alert(`Found an elevator key`))
+        this.floor.hasFoundElevatorKey = true
         return true
     }
 }
@@ -1480,14 +1744,12 @@ export abstract class InteractableBase extends ActorBase {
 }
 
 export class InteractablePowerCore extends InteractableBase {
-    power: number = 25
+    power: number = 20
 
     get spriteKey() { return 'interactable-power-core' }
     get shadowOffset() { return 4 }
     get actionText() {
-        return gameState.player.power < gameState.player.maxPower ?
-            `Cannot pick up power core (already at max power)` :
-            `Pick up power core (+${this.power} power)`
+        return `Pick up power core (+${this.power} power)`
     }
 
     interact() {
@@ -1496,6 +1758,8 @@ export class InteractablePowerCore extends InteractableBase {
             gameState.player.power += delta
             gameState.powerUpSound.play(get3dSound(this))
             this.destroy()
+        } else {
+            gameState.elements.push(new Alert(`Cannot pick up power core (already at max power)`))
         }
     }
 }
@@ -1505,11 +1769,7 @@ export class InteractableElevatorButton extends InteractableBase {
     get spriteKey() { return 'interactable-arrows' }
     get shadowOffset() { return 0 }
     get actionText() {
-        return this.isValidOnFloor() ?
-            (this.isUnlocked() ?
-                `Take elevator ${this.delta === 1 ? 'down' : 'up'}` :
-                `Cannot take elevator (locked by enemies)`) :
-            `Cannot take elevator ${this.delta === 1 ? 'down' : 'up'}`
+        return `Take elevator ${this.delta === 1 ? 'down' : 'up'}`
     }
 
     constructor(floorIndex: number, x: number, y: number, public delta: -1 | 1, public main: boolean) {
@@ -1524,8 +1784,21 @@ export class InteractableElevatorButton extends InteractableBase {
 
     interact() {
         if (this.isValidOnFloor() && this.isUnlocked()) {
-            gameState.player.floorIndex += this.delta
-            gameState.player.sprite.setPosition(0, 0)
+            gameState.elevatorSound.play()
+            this.scene.cameras.main.fadeOut(250, 0, 0, 0, (cam: Phaser.Cameras.Scene2D.Camera, t: number) => {
+                if (t === 1) {
+                    for (const d of gameState.drones) d.destroy()
+                    gameState.player.floorIndex += this.delta
+                    gameState.player.sprite.setPosition(0, 0)
+                    this.scene.cameras.main.fadeIn(250, 0, 0, 0, (cam: Phaser.Cameras.Scene2D.Camera, t: number) => {
+
+                    })
+                }
+            }, this)
+        } else if (!this.isValidOnFloor()) {
+            gameState.elements.push(new Alert(`Cannot take elevator ${this.delta === 1 ? 'down' : 'up'}`))
+        } else if (!this.isUnlocked()) {
+            gameState.elements.push(new Alert(`Cannot take elevator (locked by enemies)`))
         }
     }
 
@@ -1537,8 +1810,7 @@ export class InteractableElevatorButton extends InteractableBase {
 
     private isUnlocked(): boolean {
         if (this.delta === -1) return true
-        const noEnemies = gameState.enemies.filter(e => e.floorIndex === this.floorIndex && !e.dead).length === 0
-        return noEnemies
+        return this.floor.hasUnlockedElevator
     }
 
     private isValidOnFloor(): boolean {
@@ -1573,7 +1845,7 @@ export class Pylon extends ActorBase {
         const dx = Math.abs(gameState.player.x - this.x)
         const dy = Math.abs(gameState.player.y - this.y)
         if (dx < 48 && dy < 48) {
-            if (!this.isPowered) this.progress += dt * (this.boss ? 1 : 1.5)
+            if (!this.isPowered) this.progress += dt * (this.boss ? 1.5 : 2)
             while (this.progress > 1) {
                 this.progress--
                 this.power = Math.min(this.maxPower, this.power + 1)
@@ -1600,10 +1872,18 @@ export class GameState {
     bullets: BulletBase[] = []
     interactibles: InteractableBase[] = []
     pylons: Pylon[] = []
-    elements: ElementBase[] = [new PlayerPowerBar(), new BossPowerBar()]
+    elements: ElementBase[] = [new PlayerPowerBar(), new BossPowerBar(), new SchematicList()]
     floors: Floor[] = []
 
     tickRate: number = 0.5
+
+    score = {
+        enemiesKilled: 0,
+        bossesDefeated: 0,
+        floorsCleared: 0,
+        playTime: 0,
+        won: false,
+    }
 
     playerGroup!: Phaser.GameObjects.Group
     droneGroup!: Phaser.GameObjects.Group
@@ -1618,24 +1898,126 @@ export class GameState {
     shootSound!: Phaser.Sound.BaseSound
     powerUpSound!: Phaser.Sound.BaseSound
     clickSound!: Phaser.Sound.BaseSound
+    elevatorSound!: Phaser.Sound.BaseSound
+
+    keys!: {
+        w: Phaser.Input.Keyboard.Key,
+        a: Phaser.Input.Keyboard.Key,
+        s: Phaser.Input.Keyboard.Key,
+        d: Phaser.Input.Keyboard.Key,
+        left: Phaser.Input.Keyboard.Key,
+        right: Phaser.Input.Keyboard.Key,
+        up: Phaser.Input.Keyboard.Key,
+        down: Phaser.Input.Keyboard.Key,
+        space: Phaser.Input.Keyboard.Key,
+        shift: Phaser.Input.Keyboard.Key,
+        tab: Phaser.Input.Keyboard.Key,
+    }
 
     get floor() { return this.floors[this.player.floorIndex] }
 
     get entities() { return [this.player, ...this.drones, ...this.enemies, ...this.drops, ...this.bullets, ...this.interactibles, ...this.pylons, ...this.elements, ...this.floors] }
 }
 
-const gameState = new GameState()
+let gameState: GameState
 
-export class GameplayScene extends Phaser.Scene {
+export abstract class SceneBase extends Phaser.Scene {
+    loadingText!: Phaser.GameObjects.Text
+
+    preload() {
+        this.loadingText = this.add.text(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, '', { color: 'white', fontSize: '12px', fontFamily: 'sans-serif', align: 'center' })
+        this.loadingText.setDepth(9999)
+        this.loadingText.setScrollFactor(0, 0)
+        this.loadingText.setOrigin(0.5, 0.5)
+
+        this.load.on('progress', (value: number) => {
+            this.loadingText.setText(`Loading...\n${Math.round(value * 100)}%`)
+        })
+
+        this.load.on('complete', () => {
+            destroyComponent(this.loadingText)
+        })
+    }
+}
+
+export abstract class MenuSceneBase extends SceneBase {
+    titleText!: Phaser.GameObjects.Text
+    bodyText!: Phaser.GameObjects.Text
+    continueText!: Phaser.GameObjects.Text
+    creditsText!: Phaser.GameObjects.Text
+    continueKey!: Phaser.Input.Keyboard.Key
+    music!: Phaser.Sound.BaseSound
+
+    preload() {
+        super.preload()
+        this.load.audio('music-menu', 'assets/underglow.mp3')
+    }
+
+    create() {
+        this.titleText = this.add.text(SCREEN_WIDTH / 2, 100, '', { fontSize: '36px', fontStyle: 'bold' })
+        this.titleText.setOrigin(0.5, 0.5)
+        this.bodyText = this.add.text(100, 135, '', { fontSize: '12px', fixedWidth: SCREEN_WIDTH - 200, wordWrap: { width: SCREEN_WIDTH - 200 } })
+        this.continueText = this.add.text(SCREEN_WIDTH / 2, 275, 'Press spacebar to start a new playthough')
+        this.continueText.setOrigin(0.5, 0.5)
+        this.creditsText = this.add.text(0, SCREEN_HEIGHT, `Code by Josh Thome (Hawkbar)\nArt by Michael Schloeder (Insmoshable)\nMusic: "Underglow", "Dire Space Emergency", and "Chipstep"\nby Shane Ivers - https://www.silvermansound.com`, { fontSize: '12px' })
+        this.creditsText.setOrigin(0, 1)
+        this.continueKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE)
+        this.music = this.sound.add('music-menu', { loop: true })
+        this.music.play()
+    }
+
+    update() {
+        if (gameState?.normalMusic?.isPlaying) gameState?.normalMusic?.stop()
+        if (gameState?.bossMusic?.isPlaying) gameState?.bossMusic?.stop()
+        if (this.continueKey.isDown) {
+            this.music.stop()
+            gameState = new GameState()
+            this.scene.start('gameplay')
+        }
+    }
+}
+
+export class MenuScene extends MenuSceneBase {
+
+    constructor() { super('menu') }
+
+    create() {
+        super.create()
+        this.titleText.setText('Code-X')
+        this.bodyText.setText(`You are a specialized power supply drone from a deep underground military installation. Some of the other drones have gone haywire, attacking the facility's personnel. While you have no attacks of your own, you can carry and deploy other drones as long as you have their schematics and enough power to spare. Use your ability to find and destroy all the rogue supervisor drones in the lower levels of the facility before the surface is overrun!`)
+    }
+}
+
+export class GameOverScene extends MenuSceneBase {
+    titleText!: Phaser.GameObjects.Text
+
+    constructor() { super('gameover') }
+
+    create() {
+        super.create()
+        this.titleText.setText(gameState.score.won ? 'Victory' : 'Game Over')
+
+        const hours = Math.floor(gameState.score.playTime / (60 * 60)).toString()
+        const minutes = Math.floor((gameState.score.playTime % (60 * 60)) / 60).toString().padStart(2, '0')
+        const seconds = Math.floor(gameState.score.playTime % 60).toString().padStart(2, '0')
+        const time = `${hours}:${minutes}:${seconds}`
+
+        this.bodyText.setText(`${gameState.score.won ? 'You defeated all the rogue supervisors! The world is saved!' : 'You failed to stop the rogue supervisors. The surface was overrun by hostile robots. There were no survivors.'}\n\nEnemies Destroyed: ${gameState.score.enemiesKilled}\nBosses Defeated: ${gameState.score.bossesDefeated}\nFloors Cleared: ${gameState.score.floorsCleared}\nTotal Playtime: ${time}`)
+    }
+}
+
+export class GameplayScene extends SceneBase {
     text!: Phaser.GameObjects.Text
 
     constructor() { super('gameplay') }
 
     init() {
-        console.log(gameState)
+
     }
 
     preload() {
+        super.preload()
+
         this.load.image('placeholder', 'assets/placeholder.png')
         this.load.spritesheet('transparent', 'assets/Transparent.png', { frameWidth: 1 })
         this.load.spritesheet('drop-shadow', 'assets/DropShadow.png', { frameWidth: 32 })
@@ -1671,6 +2053,7 @@ export class GameplayScene extends Phaser.Scene {
 
         this.load.spritesheet('pickup-energy', 'assets/Pickup-Energy.png', { frameWidth: 8 })
         this.load.spritesheet('pickup-schematic', 'assets/Pickup-Schematic.png', { frameWidth: 16 })
+        this.load.spritesheet('pickup-key', 'assets/Elevator-Key.png', { frameWidth: 32 })
 
         this.load.image('interactable-power-core', 'assets/Destructable-Powercore.png')
         this.load.spritesheet('interactable-arrows', 'assets/Arrows.png', { frameWidth: 32 })
@@ -1685,15 +2068,17 @@ export class GameplayScene extends Phaser.Scene {
         this.load.spritesheet('power-bar-large', 'assets/Power-Bar-Large.png', { frameWidth: 16 })
         this.load.spritesheet('power-bar-boss', 'assets/Power-Bar-Boss.png', { frameWidth: 16 })
         this.load.spritesheet('power-bar-player', 'assets/Power-Bar-Player.png', { frameWidth: 16 })
+        this.load.spritesheet('ui-schematic-box', 'assets/UI-SelectedGun.png', { frameWidth: 32 })
+        this.load.spritesheet('ui-schematic-icon', 'assets/UI-GunIcons.png', { frameWidth: 32 })
 
         this.load.audio('music-normal', 'assets/dire-space-emergency.mp3')
         this.load.audio('music-boss', 'assets/chipstep.mp3')
-        this.load.audio('music-menu', 'assets/underglow.mp3')
         this.load.audio('sound-bump', 'assets/bump.wav')
         this.load.audio('sound-damage', 'assets/damage.wav')
         this.load.audio('sound-shoot', 'assets/laserShoot.wav')
         this.load.audio('sound-power-up', 'assets/powerUp.wav')
         this.load.audio('sound-click', 'assets/click.wav')
+        this.load.audio('sound-elevator', 'assets/elevator.wav')
     }
 
     create() {
@@ -1702,7 +2087,7 @@ export class GameplayScene extends Phaser.Scene {
         gameState.enemyGroup = this.physics.add.group()
         gameState.dropGroup = this.physics.add.group()
         gameState.bulletGroup = this.physics.add.group()
-        this.text = this.add.text(0, 360, '', { color: 'white', backgroundColor: 'dimgray', fontFamily: 'sans-serif' })
+        this.text = this.add.text(0, SCREEN_HEIGHT, '', { color: 'white', fontSize: '12px', fontFamily: 'sans-serif' })
         this.text.setDepth(9999)
         this.text.setScrollFactor(0, 0)
         this.text.setOrigin(0, 1)
@@ -1713,20 +2098,33 @@ export class GameplayScene extends Phaser.Scene {
         gameState.shootSound = this.sound.add('sound-shoot')
         gameState.powerUpSound = this.sound.add('sound-power-up')
         gameState.clickSound = this.sound.add('sound-click')
+        gameState.elevatorSound = this.sound.add('sound-elevator')
+
+        gameState.keys = {
+            w: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
+            a: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),
+            s: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),
+            d: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),
+            left: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT),
+            right: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
+            up: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.UP),
+            down: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN),
+            space: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
+            shift: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
+            tab: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TAB),
+        }
     }
 
     update(t: number, dt: number) {
+        gameState.score.playTime = t / 1000
+        gameState.score.floorsCleared = Math.max(gameState.score.floorsCleared, gameState.player.floorIndex)
         while (gameState.player.floorIndex >= gameState.floors.length) gameState.floors.push(new Floor(gameState.floors.length))
         for (const ent of gameState.entities.filter(e => e.isOnCurrentFloor && !e.spawned)) ent.spawn(this)
         for (const ent of gameState.entities.filter(e => !e.isOnCurrentFloor && e.spawned)) ent.despawn()
         for (const ent of gameState.entities.filter(e => e.spawned && e.active)) ent.update(t / 1000, dt / 1000)
         for (const ent of gameState.entities.filter(e => e.spawned && e.active)) ent.postUpdate()
 
-        this.text.setText(`Power: ${gameState.player.power}/${gameState.player.maxPower}\nSchematics (shift): ${gameState.player.schematics.map((s, i) => {
-            let str = s ? `${s.name}:${s.cost}` : `empty`
-            if (i === gameState.player.schematicIndex) str = `(${str})`
-            return str
-        }).join(' ')}\n${this.getContextTargetText()}`.trim())
+        this.text.setText(`${this.getContextTargetText()}\n(WASD/Arrow Keys) move | (Shift/Tab) cycle drones`.trim())
 
         const tick = Math.floor(t / gameState.tickRate) * gameState.tickRate
         if (t / gameState.tickRate >= tick && t - dt <= tick) {
@@ -1748,17 +2146,17 @@ export class GameplayScene extends Phaser.Scene {
             str = target.actionText
         }
         if (target instanceof DroneSchematic) {
-            str = `Place ${target.name} (-${target.cost} power)`
+            str = `Deploy ${target.name} (-${target.cost} power)`
         }
-        return str ? `(space) ${str}` : ''
+        return str ? `(Spacebar) ${str}` : ''
     }
 }
 
 const config: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
     backgroundColor: '#111',
-    width: 640,
-    height: 360,
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
     render: {
         pixelArt: true,
     },
@@ -1770,7 +2168,11 @@ const config: Phaser.Types.Core.GameConfig = {
             debug: DEBUG,
         }
     },
-    scene: GameplayScene,
+    scene: [
+        MenuScene,
+        GameOverScene,
+        GameplayScene,
+    ],
 };
 
 const game = new Phaser.Game(config)
