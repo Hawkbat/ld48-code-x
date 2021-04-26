@@ -778,7 +778,7 @@ export class Player extends UnitBase {
     get invulnPeriod() { return 1 }
 
     constructor() {
-        super(4, 0, 0, 100, 100)
+        super(0, 0, 0, 100, 100)
     }
 
     initialize() {
