@@ -27,7 +27,7 @@ enum IconType {
 
 window.onerror = (msg, src, line, col, err) => {
     if (!DEBUG) {
-        alert(`Please screenshot this and report it!\n${msg}\nin ${src}:(${line},${col})`)
+        alert(`Please screenshot this and report it!\n\n${msg}\nin ${src}:(${line},${col})`)
     }
     console.error(err)
 }
@@ -1978,12 +1978,20 @@ export abstract class MenuSceneBase extends SceneBase {
 }
 
 export class MenuScene extends MenuSceneBase {
+    logoSprite!: Phaser.GameObjects.Sprite
 
     constructor() { super('menu') }
 
+    preload() {
+        super.preload()
+        this.load.image('logo', 'assets/Logo-Eyes.png')
+    }
+
     create() {
         super.create()
-        this.titleText.setText('Code-X')
+        this.logoSprite = this.add.sprite(SCREEN_WIDTH / 2, 72, 'logo')
+        this.logoSprite.setScale(2)
+        this.titleText.setText('')
         this.bodyText.setText(`You are a specialized power supply drone from a deep underground military installation. Some of the other drones have gone haywire, attacking the facility's personnel. While you have no attacks of your own, you can carry and deploy other drones as long as you have their schematics and enough power to spare. Use your ability to find and destroy all the rogue supervisor drones in the lower levels of the facility before the surface is overrun!`)
     }
 }
@@ -2154,7 +2162,7 @@ export class GameplayScene extends SceneBase {
 
 const config: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
-    backgroundColor: '#111',
+    backgroundColor: '#000',
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
     render: {
